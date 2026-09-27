@@ -1,75 +1,134 @@
-# Product Requirements Document
+# 01 — PRODUCT REQUIREMENTS
 
-## Personas
+**Project:** `gym-saas`  
+**Product Brand:** TBD  
+**Parent Company:** TBD  
+**Document Version:** 0.1  
+**Status:** Product definition  
+**Scope:** V1 + planned future direction
 
-- **Member** — works out at the gym; books classes, manages their membership.
-- **Trainer** — runs classes and sessions; manages availability.
-- **Manager** — front-desk/ops staff; handles members, bookings, check-ins.
-- **Owner** — business KPIs: revenue, churn, utilization, staff.
-- **Superadmin** — platform operator; manages gyms (tenants) and platform health.
+---
 
-## Functional requirements
+# 1. Purpose
 
-### Authentication & accounts
+This document defines the functional requirements and product behavior for the gym SaaS platform.
 
-- Email/password signup and login; password reset; email verification.
-- Social login (Google, Apple) — v1.1 candidate.
-- One user can belong to multiple gyms with different roles (member at gym A, trainer at gym B).
-- Session management with secure, HttpOnly cookies or token rotation.
+It translates the Project Charter into concrete product requirements.
 
-### Gym (tenant) management
+This document describes:
 
-- Superadmin creates gyms; owner configures profile, branding, timezone, currency.
-- Staff invitation with roles (owner, manager, trainer).
+- Who uses the system
+- What users can do
+- Core business rules
+- V1 scope
+- Future scope
+- Important product constraints
+- Acceptance expectations
 
-### Plans & subscriptions
+This document does not define the detailed database schema, API implementation, infrastructure, or UI design.
 
-- Owner defines plans: name, billing interval, price, class credits or unlimited, trial days.
-- Member purchases plan → subscription with states: `trialing`, `active`, `past_due`, `frozen`, `cancelled`, `expired`.
-- Freeze (pause) with resume date; proration rules documented per plan.
-- Dunning: automatic retries + member notifications on failed payments.
+Those will be defined in later documents.
 
-### Class scheduling & booking
+---
 
-- Trainers/managers create recurring and one-off classes: capacity, location/room, trainer, time window.
-- Members browse schedule, book, cancel (within cancellation window), join waitlist.
-- Automatic waitlist promotion on cancellations, with notification.
-- Check-in via QR/code at the gym; no-show tracking.
+# 2. Product Users
 
-### Trainer management
+The system has two primary user groups.
 
-- Trainer profiles, specialties, availability windows.
-- Session history and attendance counts (inputs to payroll reporting).
+## 2.1 Gym-side users
 
-### Payments
+### OWNER
 
-- One-off and recurring billing through the payment provider; invoices/receipts.
-- Refunds and credits handled by managers with an audit trail.
-- No card data touches our servers (provider-hosted elements / tokens only).
+The primary customer and highest-level organization role.
 
-### Notifications
+The owner can:
 
-- Email + push: booking confirmations, waitlist promotions, payment failures, class changes.
-- Member notification preferences.
+- Configure the gym
+- Manage members
+- Manage memberships
+- Manage payments
+- Manage attendance
+- Manage staff
+- Manage roles/permissions
+- Configure gym payment information
+- View operational information
+- Manage announcements
+- Manage product settings
+- View reports/exports
+- Manage gym subscription/trial state where applicable
 
-### Reporting (owner/manager)
+---
 
-- MRR, churn, new vs cancelled members, class utilization, attendance, revenue by plan.
+### ADMIN
 
-## Non-functional requirements
+An organization-level operational role.
 
-| Category | Requirement |
-| --- | --- |
-| Performance | p95 API latency < 300 ms; booking flow < 30 s end-to-end |
-| Availability | 99.9% monthly for booking/check-in; see `11-OBSERVABILITY.md` |
-| Security | OWASP ASVS L2 baseline; tenant isolation; see `05-AUTHORIZATION.md`, `06-SECURITY.md` |
-| Privacy | PII minimization, export/delete on request, regional data residency as required |
-| Accessibility | WCAG 2.2 AA for member and dashboard surfaces |
-| Offline | PWA: view schedule and bookings offline; queue mutations; see `08-PWA.md` |
-| Scalability | Support 10k gyms / 1M members on the v1 architecture; see `12-SCALABILITY.md` |
+The exact permissions will be defined in the authorization design.
 
-## Open questions
+An admin may perform many owner-like operational tasks but does not automatically have every owner capability.
 
-- Cancellation/refund policy defaults per region.
-- Whether class credits expire and rollover rules.
-- Multi-location support timeline (currently out of v1 scope).
+---
+
+### STAFF
+
+A gym operational user.
+
+Staff capabilities will depend on assigned permissions.
+
+Typical responsibilities may include:
+
+- Member operations
+- Attendance operations
+- Payment verification
+- Membership operations
+
+Staff must not receive unrestricted owner access by default.
+
+---
+
+### TRAINER
+
+A gym operational user whose permissions are intentionally narrower.
+
+Trainer capabilities will be defined through the permission model.
+
+Trainer must not automatically receive access to financial or administrative operations.
+
+---
+
+## 2.2 MEMBER
+
+The member is the primary end user of the member-facing experience.
+
+Members can:
+
+- Authenticate
+- Access their gym
+- Check in
+- View attendance
+- View membership
+- View payment status
+- Submit payment claims
+- View announcements
+- View occupancy
+- Use future engagement features
+
+---
+
+# 3. Multi-Tenant Requirements
+
+The system must support multiple independent gyms.
+
+Each gym is an independent organization/tenant.
+
+### Requirement
+
+A user must only access data belonging to organizations in which the user has appropriate membership and authorization.
+
+### Example
+
+If a user belongs to:
+
+```text
+Gym A
+Gym B

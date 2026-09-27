@@ -536,3 +536,151 @@ fix: prevent cross-tenant member access
 test: add payment balance coverage
 docs: update authorization model
 refactor: simplify attendance service
+
+Avoid vague commits such as:
+
+update
+changes
+stuff
+fix
+ai changes
+
+Do not rewrite Git history unless explicitly requested.
+
+24. Pull Requests
+
+A meaningful change should explain:
+
+What changed
+Why it changed
+What was tested
+Security considerations
+Database/migration changes
+Any known limitations
+
+Keep pull requests focused.
+
+Do not bundle unrelated features into one pull request.
+
+25. Documentation Rules
+
+If implementation changes an established behavior or architecture:
+
+Update the relevant documentation.
+
+Examples:
+
+Architecture change → 03-SYSTEM-ARCHITECTURE.md
+Database change → 04-DATABASE-DESIGN.md
+Authorization change → 05-AUTHORIZATION.md
+Security behavior → 06-SECURITY.md
+API behavior → 07-API-SPECIFICATION.md
+Product behavior → 01-PRODUCT-REQUIREMENTS.md
+Major decision → docs/decisions/
+Current implementation state → 20-CURRENT-STATE.md
+
+Documentation should describe the actual implementation, not an imagined future state.
+
+26. Current State
+
+Before starting significant work, check:
+
+docs/20-CURRENT-STATE.md
+
+After completing a meaningful feature or architectural change, update it.
+
+The current-state document should make it possible for another developer or AI agent to understand:
+
+What is completed
+What is in progress
+What is next
+Known issues
+Recent decisions
+Important implementation details
+27. When Requirements Are Ambiguous
+
+Do not invent important business rules.
+
+If ambiguity affects:
+
+Money
+Authorization
+Security
+Data ownership
+Tenant isolation
+User identity
+Membership state
+Payment state
+Production infrastructure
+
+stop and ask for clarification.
+
+For low-risk implementation details, choose the simplest reasonable approach and document the assumption if necessary.
+
+28. No Whole-SaaS Generation
+
+Never attempt to generate the entire SaaS application in one task.
+
+Work incrementally.
+
+A feature should be small enough that:
+
+Its requirements are understood.
+Its security implications can be reviewed.
+Its tests can be written.
+Its diff can be reviewed.
+Its documentation can be updated.
+29. AI Tool Independence
+
+The project must not depend on any single AI tool.
+
+Any coding AI should be able to continue work by reading the repository.
+
+Do not store important architectural decisions only in:
+
+ChatGPT conversations
+Cursor conversations
+Copilot conversations
+Claude conversations
+Temporary AI context
+
+Persist important decisions in the repository.
+
+30. Final Rule
+
+When uncertain, prefer:
+
+clarity over cleverness,
+
+security over convenience,
+
+correctness over speed,
+
+small changes over large rewrites,
+
+documented decisions over assumptions,
+
+and
+
+human approval over silent architectural changes.
+
+### After pasting
+
+Commit it as:
+
+```text
+docs: define AI engineering rules
+
+Then we will have:
+
+AI_CONTEXT.md
+        ↓
+"What is this project?"
+
+AGENTS.md
+        ↓
+"How must an AI work on it?"
+
+00-PROJECT-CHARTER.md
+        ↓
+"Why are we building it and what is the product?"

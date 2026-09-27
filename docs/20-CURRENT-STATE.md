@@ -1070,14 +1070,4 @@ Do not silently change architecture to match an AI-generated assumption.
 Surface the discrepancy, determine the intended state, and update the appropriate source-of-truth document.
 
 ---
-
-
-
-```
-
-Save it as:
-
-`docs/20-CURRENT-STATE.md`
-
-Then we have the **documentation foundation complete**.
 ```

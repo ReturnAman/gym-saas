@@ -1,8 +1,8 @@
 # ADR 003 — Testing Strategy
 
 **Project:** gym-saas  
-**Status:** Proposed  
-**Date:** YYYY-MM-DD  
+**Status:** Accepted  
+**Date:** 2026-09-29  
 **Decision Type:** Engineering / Quality
 
 ---
@@ -488,14 +488,10 @@ and potentially:
 docs/09-TESTING.md
 25. Test Framework
 
-The exact test framework remains an implementation decision.
+Selected testing stack (Accepted 2026-09-29):
 
-Current candidate direction:
-
-Vitest for unit/integration testing
-Playwright for browser end-to-end testing
-
-Final selection should be made before substantial feature implementation.
+Vitest for unit and application/integration tests
+Playwright for browser/end-to-end tests
 
 26. Definition of Done
 
@@ -636,12 +632,12 @@ Performance requirements change
 
 Decision Owner: Project Owner
 
-Status: Proposed
+Status: Accepted
 
-Approved: No
+Approved: Yes
 
-Test Framework: TBD
+Test Framework: Vitest
 
-E2E Framework: TBD
+E2E Framework: Playwright
 
-Approval Date: N/A
+Approval Date: 2026-09-29

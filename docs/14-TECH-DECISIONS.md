@@ -974,7 +974,12 @@ long-term maintainability
 48. Decision: Testing Framework
 Status
 
-OPEN
+DECIDED — see `docs/decisions/003-TESTING-STRATEGY.md` (Accepted 2026-09-29).
+
+Selected stack:
+
+Vitest for unit and application/integration tests
+Playwright for browser/end-to-end tests
 
 The project requires:
 
@@ -983,14 +988,6 @@ integration testing
 API testing
 frontend testing
 end-to-end testing
-
-Candidate tools may include:
-
-Vitest
-Playwright
-framework-native testing tools
-
-The exact combination will be selected based on the final application stack.
 
 49. Decision: API Style
 Status
@@ -1312,9 +1309,6 @@ destructive database operations
 
 The following important decisions remain open and should be resolved before the corresponding implementation work:
 
-Authentication provider
-ORM/query layer
-Exact testing framework
 Production hosting provider
 PostgreSQL hosting provider
 Error tracking provider

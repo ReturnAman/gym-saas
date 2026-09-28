@@ -778,7 +778,6 @@ The following decisions remain open unless explicitly changed elsewhere:
 
 * Final product name
 * Final domain
-* Testing framework
 * Production hosting
 * Production PostgreSQL provider
 * Error tracking provider
@@ -1049,6 +1048,7 @@ Do not update it for every tiny code change.
 | YYYY-MM-DD | Initial current-state document created | Project Owner |
 | 2026-09-29 | ORM finalized: Prisma (ADR 002 Accepted); stale ORM references updated | Project Owner |
 | 2026-09-29 | Authentication provider finalized: Clerk (ADR 001 Accepted; ADR 015 Accepted) | Project Owner |
+| 2026-09-29 | Testing stack finalized: Vitest + Playwright (ADR 003 Accepted) | Project Owner |
 
 ---
 

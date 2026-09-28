@@ -9,7 +9,7 @@ and format.
 | --- | --- | --- | --- |
 | [001](001-AUTHENTICATION.md) | Authentication Architecture | Accepted | 2026-09-29 |
 | [002](002-DATABASE-ORM.md) | Database ORM (PostgreSQL + Prisma) | Accepted | 2026-09-29 |
-| [003](003-TESTING-STRATEGY.md) | Testing Strategy | Proposed | — |
+| [003](003-TESTING-STRATEGY.md) | Testing Strategy | Accepted | 2026-09-29 |
 | [004](004-HOSTING-AND-INFRASTRUCTURE.md) | Hosting and Infrastructure | Proposed | — |
 | [005](005-WHATSAPP-PROVIDER.md) | WhatsApp Provider | Proposed | — |
 | [006](006-FILE-STORAGE.md) | File Storage | Proposed | — |

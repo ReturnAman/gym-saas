@@ -920,17 +920,14 @@ Destructive migrations require explicit review.
 
 40. ORM / Data Access
 
-The application may use a TypeScript-compatible ORM or database access layer.
+The application uses Prisma as the TypeScript ORM / database access layer
+for PostgreSQL (decided 2026-09-29; see `decisions/002-DATABASE-ORM.md`,
+status Accepted).
 
-Candidate technologies include:
-
-Prisma
-Drizzle
-another appropriately evaluated PostgreSQL solution
-
-The final choice must be recorded in:
+The decision is recorded in:
 
 14-TECH-DECISIONS.md
+decisions/002-DATABASE-ORM.md
 
 The ORM must not become a substitute for understanding the underlying PostgreSQL data model.
 

@@ -1,8 +1,8 @@
 # ADR 002 — Database ORM
 
 **Project:** gym-saas  
-**Status:** Proposed  
-**Date:** YYYY-MM-DD  
+**Status:** Accepted  
+**Date:** 2026-09-29  
 **Decision Type:** Data / Architecture
 
 ---
@@ -381,18 +381,26 @@ Chosen Hosting Provider
 The application should avoid unnecessary provider-specific database assumptions.
 
 18. Decision
-Current Status
 
-ORM selection remains open.
+**Decision: Prisma is the selected ORM for gym-saas.**
 
-The two primary candidates are:
+- Database: PostgreSQL (unchanged)
+- ORM: Prisma
+- Status: Accepted
+- Date: 2026-09-29
 
-Prisma
-Drizzle ORM
+Drizzle ORM was evaluated as the alternative (see sections 7–9). Prisma is
+selected for its mature TypeScript developer experience, strong generated
+types, schema-driven migration tooling, and ecosystem fit for a small team.
 
-No production implementation should assume one of these is permanently selected until the decision is approved.
+Production implementation must use Prisma. The requirements, constraints, and
+guardrails in sections 2–6 and 10–17 apply to the Prisma implementation.
 
 19. Preliminary Direction
+
+> Note (2026-09-29): The ORM decision has been finalized as Prisma (see
+> section 18). The proof-of-concept comparison below is retained for context
+> but is no longer a prerequisite.
 
 For the current project, the preferred evaluation direction is:
 
@@ -470,10 +478,10 @@ Those remain separate decisions.
 
 Decision Owner: Project Owner
 
-Status: Proposed
+Status: Accepted
 
-Approved: No
+Approved: Yes
 
-Selected ORM: TBD
+Selected ORM: Prisma
 
-Approval Date: N/A
+Approval Date: 2026-09-29

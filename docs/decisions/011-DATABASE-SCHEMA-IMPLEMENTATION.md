@@ -1217,7 +1217,7 @@ Before approving a schema change, review:
 
 This ADR does not finalize:
 
-Prisma vs Drizzle
+ORM selection (decided separately: Prisma, see ADR 002)
 exact PostgreSQL hosting provider
 exact production database size
 exact connection pooling configuration

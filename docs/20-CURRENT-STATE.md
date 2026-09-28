@@ -6,7 +6,7 @@
 **Parent Company:** XYZ  
 **Version:** 0.1  
 **Status:** Documentation / Architecture Phase  
-**Last Updated:** YYYY-MM-DD
+**Last Updated:** 2026-09-29
 
 ---
 
@@ -212,12 +212,7 @@ Authentication and authorization remain separate concepts.
 
 ### ORM
 
-Still open:
-
-- Prisma
-- Drizzle
-
-The decision should be made before implementation of the database layer.
+Decided (2026-09-29): Prisma. See `docs/decisions/002-DATABASE-ORM.md` (Accepted).
 
 ---
 
@@ -784,7 +779,6 @@ The following decisions remain open unless explicitly changed elsewhere:
 * Final product name
 * Final domain
 * Authentication provider
-* ORM
 * Testing framework
 * Production hosting
 * Production PostgreSQL provider
@@ -1054,6 +1048,7 @@ Do not update it for every tiny code change.
 | Date       | Change                                 | Owner         |
 | ---------- | -------------------------------------- | ------------- |
 | YYYY-MM-DD | Initial current-state document created | Project Owner |
+| 2026-09-29 | ORM finalized: Prisma (ADR 002 Accepted); stale ORM references updated | Project Owner |
 
 ---
 

@@ -951,16 +951,11 @@ cost after student benefits
 47. Decision: ORM
 Status
 
-OPEN
+DECIDED — see `docs/decisions/002-DATABASE-ORM.md` (Accepted 2026-09-29).
 
-The project will use an ORM/query layer appropriate for PostgreSQL and TypeScript.
+Selected ORM: Prisma, for PostgreSQL and TypeScript.
 
-Candidates may include:
-
-Prisma
-Drizzle
-
-The final choice must consider:
+The evaluation below is retained for context. The final choice considered:
 
 migrations
 type safety
@@ -970,8 +965,6 @@ performance
 debugging
 PostgreSQL support
 long-term maintainability
-
-The ORM decision must be made before implementation of the database layer.
 
 48. Decision: Testing Framework
 Status

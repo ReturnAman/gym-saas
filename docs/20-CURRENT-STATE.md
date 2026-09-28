@@ -201,8 +201,8 @@ Current technology direction:
 
 ### Authentication
 
-- Clerk is the leading candidate
-- Final provider decision remains open until explicitly approved
+- Clerk is the selected authentication provider (Accepted 2026-09-29; see `docs/decisions/001-AUTHENTICATION.md`)
+- Clerk is responsible for authentication/identity only; authorization, organization membership, roles, and tenant isolation remain application-owned
 
 ### Authorization
 
@@ -778,7 +778,6 @@ The following decisions remain open unless explicitly changed elsewhere:
 
 * Final product name
 * Final domain
-* Authentication provider
 * Testing framework
 * Production hosting
 * Production PostgreSQL provider
@@ -1049,6 +1048,7 @@ Do not update it for every tiny code change.
 | ---------- | -------------------------------------- | ------------- |
 | YYYY-MM-DD | Initial current-state document created | Project Owner |
 | 2026-09-29 | ORM finalized: Prisma (ADR 002 Accepted); stale ORM references updated | Project Owner |
+| 2026-09-29 | Authentication provider finalized: Clerk (ADR 001 Accepted; ADR 015 Accepted) | Project Owner |
 
 ---
 

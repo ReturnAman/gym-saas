@@ -1,8 +1,8 @@
 # ADR 001 — Authentication Architecture
 
 **Project:** gym-saas  
-**Status:** Proposed  
-**Date:** YYYY-MM-DD  
+**Status:** Accepted  
+**Date:** 2026-09-29  
 **Decision Type:** Security / Architecture
 
 ---
@@ -97,13 +97,15 @@ Role
 Permission
       ↓
 Resource Access
-4. Candidate Authentication Provider
+4. Selected Authentication Provider
 
-The leading candidate is:
+The selected authentication provider is:
 
 Clerk
 
-Reasons it is being considered:
+Status: Accepted (2026-09-29)
+
+Reasons for selection:
 
 Student benefit availability
 Managed authentication infrastructure
@@ -112,9 +114,15 @@ Session management
 User management
 Integration with modern web applications
 
-However:
+Responsibility boundary:
 
-The provider is not considered permanently locked until the decision is formally approved.
+Clerk is responsible for authentication and identity: who the user is,
+credentials, and sessions.
+
+The application remains responsible for authorization, organization
+membership, roles, tenant isolation, and business permissions.
+
+Business authorization must not be moved into Clerk.
 
 5. Provider Boundary
 
@@ -402,13 +410,13 @@ bypass membership checks
 allow frontend-only authorization
 expose sensitive authentication state unnecessarily
 20. Decision
-Current Status
 
-Clerk remains the leading authentication provider candidate.
+**Decision: Clerk is the selected authentication provider for gym-saas.**
 
-The final provider decision should be explicitly approved before production authentication implementation.
+- Status: Accepted
+- Date: 2026-09-29
 
-Regardless of provider selection:
+Regardless of this selection, the following remain true:
 
 authentication and authorization remain separate
 application users remain distinct from provider users
@@ -455,8 +463,8 @@ AGENTS.md
 
 Decision Owner: Project Owner
 
-Status: Proposed
+Status: Accepted
 
-Approved: No
+Approved: Yes
 
-Approval Date: N/A
+Approval Date: 2026-09-29

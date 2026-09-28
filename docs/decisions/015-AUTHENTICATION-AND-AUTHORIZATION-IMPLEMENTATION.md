@@ -1,7 +1,7 @@
 # ADR 015: Authentication and Authorization Implementation
 
-- Status: Proposed
-- Date: 2026-09-28
+- Status: Accepted
+- Date: 2026-09-29
 - Decision Type: Security / Identity / Authorization
 - Related:
   - `05-AUTHORIZATION.md`
@@ -69,13 +69,15 @@ Authentication-provider identity will not replace the application's domain ident
 
 3. Authentication Provider
 
-The current leading authentication candidate is Clerk, based on the project requirements and student benefits.
+The selected authentication provider is Clerk (Accepted 2026-09-29; see
+`decisions/001-AUTHENTICATION.md`).
 
-However:
-
-Clerk is not considered permanently coupled to the domain model.
+Clerk is responsible for authentication and identity only.
 
 The application must maintain its own user and organization relationships.
+
+Business authorization — organization membership, roles, permissions, tenant
+isolation — remains application-owned and must not be moved into Clerk.
 
 Conceptually:
 
@@ -89,7 +91,7 @@ organization memberships
         ↓
 permissions
 
-The final provider decision remains subject to the authentication ADR and implementation validation.
+The provider selection is recorded in ADR 001 (Accepted 2026-09-29).
 
 4. Authentication vs Authorization
 

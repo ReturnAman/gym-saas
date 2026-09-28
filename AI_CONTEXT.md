@@ -113,7 +113,8 @@ Do not create infrastructure yet unless explicitly instructed.
 
 ### Authentication
 
-A managed authentication provider such as Clerk may be used.
+A managed authentication provider is used: Clerk is the selected provider
+(see `docs/decisions/001-AUTHENTICATION.md`, Accepted).
 
 Authentication does not replace application authorization.
 

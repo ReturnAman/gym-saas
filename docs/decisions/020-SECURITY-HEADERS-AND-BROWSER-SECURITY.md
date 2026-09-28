@@ -334,7 +334,7 @@ The exact settings depend on the authentication architecture.
 
 25. Authentication Provider
 
-Clerk is currently the leading authentication candidate.
+Clerk is the selected authentication provider (Accepted 2026-09-29; see ADR 001).
 
 Browser security configuration must remain compatible with Clerk's documented authentication model.
 

@@ -286,11 +286,16 @@ server-side.
 11. Decision: Authentication Provider
 Status
 
-OPEN
+DECIDED — see `docs/decisions/001-AUTHENTICATION.md` (Accepted 2026-09-29).
+
+Selected provider: Clerk, for authentication/identity.
+
+Authorization, organization membership, roles, tenant isolation, and business
+permissions remain application-owned and must not be moved into Clerk.
 
 Current Direction
 
-Clerk is the leading candidate because of its student benefit and support for authentication workflows.
+Clerk was selected because of its student benefit and support for authentication workflows.
 
 Requirements
 

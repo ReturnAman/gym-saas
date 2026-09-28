@@ -32,15 +32,35 @@ Key docs: [AI context](AI_CONTEXT.md) · [Agent operating manual](AGENTS.md) ·
 
 ## Quickstart
 
-> The tech stack is not finalized yet — see
-> [docs/14-TECH-DECISIONS.md](docs/14-TECH-DECISIONS.md) and
-> [docs/20-CURRENT-STATE.md](docs/20-CURRENT-STATE.md). This section will grow
-> as the first ADR lands.
+Prerequisites: Node.js 20+ and a PostgreSQL database.
 
 ```bash
 git clone <repo-url> gym-saas
 cd gym-saas
-# TODO: add stack-specific setup once chosen
+npm install
+
+# 1. Configure environment
+cp .env.example .env.local
+# fill in DATABASE_URL (and later Clerk keys) — placeholders only in .env.example
+
+# 2. Generate the Prisma client
+npm run prisma:generate
+
+# 3. Run the app
+npm run dev          # http://localhost:3000
+```
+
+Useful commands:
+
+```bash
+npm test             # unit/application tests (Vitest)
+npm run test:e2e     # browser smoke tests (Playwright, Chromium)
+npm run lint         # ESLint
+npm run typecheck    # TypeScript
+npm run build        # production build (also runs prisma generate)
+npm run prisma:validate   # validate prisma/schema.prisma
+npm run prisma:migrate     # create/apply a migration (needs a real database)
+npm run prisma:studio      # inspect the database
 ```
 
 ## Contributing

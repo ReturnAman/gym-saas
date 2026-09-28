@@ -1,17 +1,20 @@
-import { requireCurrentUser } from "@/lib/server/auth";
+import { redirect } from "next/navigation";
 
-// Minimal protected application page.
+import { requireCurrentUser } from "@/lib/server/auth";
+import { getPrimaryMembership } from "@/lib/server/authorization";
+
+// Entry point into the protected application.
 //
 // Authentication is enforced server-side: requireCurrentUser() redirects
-// unauthenticated visitors to /sign-in before any application data is read
-// or rendered. No client-side auth state is trusted.
+// unauthenticated visitors to /sign-in before anything else happens.
+// Authenticated users are routed by membership: first-time users with no
+// organization go to onboarding; everyone else goes to their
+// organization's protected area.
 export default async function AppPage() {
   const user = await requireCurrentUser();
-
-  return (
-    <main>
-      <h1>Signed in</h1>
-      <p>Application user ID: {user.id}</p>
-    </main>
-  );
+  const membership = await getPrimaryMembership(user.id);
+  if (!membership) {
+    redirect("/onboarding");
+  }
+  redirect("/app/org");
 }

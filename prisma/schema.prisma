@@ -86,5 +86,58 @@ model User {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  memberships OrganizationMembership[]
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Organization and owner onboarding foundation (ADR 010, ADR 011, ADR 015).
+// ---------------------------------------------------------------------------
+// Organization is the gym/business tenant. Only the minimum fields for the
+// foundation are present (name comes from the onboarding form); gym profile
+// fields (phone, email, address, status) arrive with their own issues per
+// 04-DATABASE-DESIGN §7 ("additional settings may be added as the product
+// evolves").
+//
+// OrganizationMembership is the authorization boundary between a User and an
+// Organization (ADR 015 §14). Roles are application-owned and
+// organization-scoped; the unique constraint on (user_id, organization_id)
+// guarantees a user can never hold duplicate memberships in one
+// organization.
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships OrganizationMembership[]
+
+  @@map("organizations")
+}
+
+// Application-owned roles, organization-scoped (ADR 015 §15). Stable
+// UPPERCASE values per the schema conventions; never UI labels.
+enum Role {
+  OWNER
+  ADMIN
+  TRAINER
+  STAFF
+  MEMBER
+}
+
+model OrganizationMembership {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  role           Role     @default(MEMBER)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("organization_memberships")
 }

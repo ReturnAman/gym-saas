@@ -24,6 +24,24 @@ All notable changes to this project are documented here, following
   and a minimal protected `/app` page enforcing authentication
   server-side. Clerk keys are required env vars
   (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`).
+- Organization and owner onboarding foundation: `Organization` and
+  `OrganizationMembership` models (`organizations` and
+  `organization_memberships` tables: UUID PKs, `Role` enum
+  `OWNER/ADMIN/TRAINER/STAFF/MEMBER`, unique constraint on
+  `(user_id, organization_id)` preventing duplicate memberships, FKs with
+  cascade) with migration
+  `20260928213000_add_organizations_and_memberships`; server-side
+  authorization layer (`src/lib/server/authorization.ts`: membership lookup,
+  `requireOrganizationMembership`, `hasRole`, `requireOrganizationContext`
+  — organization derived from server-side membership data only); atomic
+  organization creation (`createOrganization`: single `$transaction` creating
+  the `Organization` plus the creator's `OWNER` membership) exposed through
+  the `createOrganizationAction` server action; minimal protected
+  onboarding page (`/onboarding`: gym-name form, never shown again once the
+  user belongs to an organization) and protected organization page
+  (`/app/org`: displays the gym name); `/app` routes first-time users to
+  onboarding and members to their organization area. Unauthenticated
+  requests to `/app`, `/onboarding`, and `/app/org` redirect to `/sign-in`.
 
 ## [0.0.0] - 2026-09-27
 

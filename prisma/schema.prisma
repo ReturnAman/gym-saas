@@ -1,4 +1,4 @@
-// Prisma schema — foundation only.
+// Prisma schema — database foundation.
 //
 // PostgreSQL datasource per ADR 002. The connection string lives in
 // prisma.config.ts (Prisma 7+), sourced from the DATABASE_URL environment
@@ -8,6 +8,54 @@
 // payments, …) are intentionally NOT defined here; they arrive with their
 // own implementation issues and migrations.
 // See docs/04-DATABASE-DESIGN.md and docs/decisions/002-DATABASE-ORM.md.
+
+// ---------------------------------------------------------------------------
+// Schema conventions (ADR 012). Every future model MUST follow these.
+// ---------------------------------------------------------------------------
+// Naming:  PostgreSQL uses lowercase snake_case. Prisma models/fields use
+//          PascalCase/camelCase in TypeScript and map explicitly:
+//            model OrganizationMembership { ... @@map("organization_memberships") }
+//            organizationId String @map("organization_id")
+//          Tables are plural; the primary-key column is always `id`;
+//          foreign keys are `<entity>_id` (e.g. organization_id, member_id).
+//
+// IDs:     Stable opaque generated identifiers — never phone numbers, never
+//          sequential integers (ADR 012 §8–10; 04-DATABASE-DESIGN §44).
+//          Standard primary key:
+//
+//            id String @id @default(uuid())
+//
+//          The UUID itself may serve as the API resource identifier; do not
+//          invent a second public_id without a concrete requirement.
+//
+// Time:    Instants are UTC timestamptz (Prisma DateTime). Standard lifecycle
+//          pair on every table:
+//
+//            createdAt DateTime @default(now()) @map("created_at")
+//            updatedAt DateTime @updatedAt       @map("updated_at")
+//
+//          Domain instants use descriptive `_at` names (checked_in_at,
+//          confirmed_at, …); calendar dates use `_date` (start_date,
+//          end_date, …) as DateTime @db.Date — never ambiguous `date`/`time`.
+//
+// Money:   Exact types only — Decimal, never Float (ADR 011 §29).
+//
+// Enums:   Stable UPPERCASE values (PENDING, APPROVED, …), never UI labels.
+//
+// Template for new models:
+//
+//   model Example {
+//     id             String   @id @default(uuid())
+//     organizationId String   @map("organization_id")
+//     createdAt      DateTime @default(now()) @map("created_at")
+//     updatedAt      DateTime @updatedAt       @map("updated_at")
+//
+//     @@map("examples")
+//   }
+//
+// Tenant-owned models MUST carry organizationId and queries MUST always
+// filter by it (ADR 011 §21). Constraints and indexes follow the real query
+// patterns of each feature — none are declared speculatively here.
 
 generator client {
   provider = "prisma-client-js"

@@ -10,6 +10,10 @@ env:
   # but Prisma and the build expect the variables to be present.
   DATABASE_URL: postgresql://ci:ci@localhost:5432/gymsaas_ci
   APP_URL: http://localhost:3000
+  # Dummy, format-valid Clerk keys so the app boots and builds without real
+  # credentials (see playwright.config.ts). Real keys are deployment secrets.
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZHVtbXkubG9jYWwk
+  CLERK_SECRET_KEY: sk_test_dummy
 
 jobs:
   build:

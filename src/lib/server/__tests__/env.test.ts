@@ -5,6 +5,8 @@ const BASE = {
   NODE_ENV: "test",
   APP_URL: "http://localhost:3000",
   DATABASE_URL: "postgresql://user:pass@localhost:5432/gymsaas",
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
+  CLERK_SECRET_KEY: "sk_test_x",
 } as const;
 
 describe("validateEnv", () => {
@@ -13,6 +15,8 @@ describe("validateEnv", () => {
     expect(env.nodeEnv).toBe("test");
     expect(env.appUrl).toBe("http://localhost:3000");
     expect(env.databaseUrl).toBe("postgresql://user:pass@localhost:5432/gymsaas");
+    expect(env.clerkPublishableKey).toBe("pk_test_x");
+    expect(env.clerkSecretKey).toBe("sk_test_x");
   });
 
   it("fails clearly when DATABASE_URL is missing", () => {
@@ -33,16 +37,25 @@ describe("validateEnv", () => {
     expect(() => validateEnv(invalid)).toThrow(/NODE_ENV/);
   });
 
-  it("treats Clerk keys as optional until authentication is implemented", () => {
-    const env = validateEnv({ ...BASE });
-    expect(env.clerkPublishableKey).toBeUndefined();
-    expect(env.clerkSecretKey).toBeUndefined();
+  it("requires both Clerk keys now that authentication is implemented", () => {
+    const withoutPublishable: NodeJS.ProcessEnv = { ...BASE };
+    delete withoutPublishable.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    expect(() => validateEnv(withoutPublishable)).toThrow(
+      /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY/,
+    );
 
-    const withClerk = validateEnv({
+    const withoutSecret: NodeJS.ProcessEnv = { ...BASE };
+    delete withoutSecret.CLERK_SECRET_KEY;
+    expect(() => validateEnv(withoutSecret)).toThrow(/CLERK_SECRET_KEY/);
+  });
+
+  it("accepts the standard Clerk variable names", () => {
+    const env = validateEnv({
       ...BASE,
-      CLERK_PUBLISHABLE_KEY: "pk_test_x",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_x",
       CLERK_SECRET_KEY: "sk_test_x",
     });
-    expect(withClerk.clerkSecretKey).toBe("sk_test_x");
+    expect(env.clerkPublishableKey).toBe("pk_test_x");
+    expect(env.clerkSecretKey).toBe("sk_test_x");
   });
 });

@@ -17,10 +17,12 @@ export interface ServerEnv {
   nodeEnv: NodeEnv;
   appUrl: string;
   databaseUrl: string;
-  /** Clerk is the accepted auth provider (ADR 001). Keys stay optional until
-   *  authentication is implemented in a later issue. */
-  clerkPublishableKey?: string;
-  clerkSecretKey?: string;
+  /** Clerk is the accepted auth provider (ADR 001). Standard Clerk variable
+   *  names; required now that authentication is implemented. The publishable
+   *  key is public by design (NEXT_PUBLIC_); the secret key never leaves the
+   *  server. */
+  clerkPublishableKey: string;
+  clerkSecretKey: string;
 }
 
 function required(name: string, source: NodeJS.ProcessEnv): string {
@@ -32,10 +34,6 @@ function required(name: string, source: NodeJS.ProcessEnv): string {
     );
   }
   return value;
-}
-
-function optional(name: string, source: NodeJS.ProcessEnv): string | undefined {
-  return source[name] || undefined;
 }
 
 export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
@@ -50,8 +48,8 @@ export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv 
     nodeEnv,
     appUrl: required("APP_URL", source),
     databaseUrl: required("DATABASE_URL", source),
-    clerkPublishableKey: optional("CLERK_PUBLISHABLE_KEY", source),
-    clerkSecretKey: optional("CLERK_SECRET_KEY", source),
+    clerkPublishableKey: required("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", source),
+    clerkSecretKey: required("CLERK_SECRET_KEY", source),
   };
 }
 

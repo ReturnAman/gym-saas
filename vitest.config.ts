@@ -19,5 +19,16 @@ export default defineConfig({
     // Browser/E2E tests belong to Playwright (tests/e2e), not Vitest.
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // The env module validates on import, so unit tests must not depend on
+    // ambient developer/CI environment. Placeholders only — real secrets
+    // never belong here; tests that need specific values pass explicit
+    // sources to validateEnv().
+    env: {
+      NODE_ENV: "test",
+      APP_URL: "http://localhost:3000",
+      DATABASE_URL: "postgresql://user:pass@localhost:5432/gymsaas",
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_vitest",
+      CLERK_SECRET_KEY: "sk_test_vitest",
+    },
   },
 });

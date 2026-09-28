@@ -64,3 +64,27 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ---------------------------------------------------------------------------
+// Authentication foundation.
+// ---------------------------------------------------------------------------
+// The application User is the application's own identity record, distinct
+// from the Clerk identity (ADR 001 §5, ADR 015 §5). Clerk proves *who* the
+// person is; this row is the stable internal identity the domain will
+// reference (organization memberships, members, …) in later issues.
+//
+// Identity rules (ADR 001 §6):
+// - Primary key is an opaque generated UUID — never a phone number.
+// - clerkUserId is the unique link to the Clerk identity, with a unique
+//   constraint so repeated synchronization can never create duplicates.
+// - Phone is deliberately NOT stored here and is NOT a unique key.
+model User {
+  id          String   @id @default(uuid())
+  clerkUserId String   @unique @map("clerk_user_id")
+  // Explicit timestamptz: Prisma's default PostgreSQL DateTime mapping is
+  // `timestamp` (no time zone); the convention requires UTC timestamptz.
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("users")
+}

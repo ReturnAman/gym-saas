@@ -24,6 +24,18 @@ All notable changes to this project are documented here, following
   and a minimal protected `/app` page enforcing authentication
   server-side. Clerk keys are required env vars
   (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`).
+- Gym profile and owner settings: nullable `phone`, `email`, `address`
+  fields on `Organization` with migration
+  `20260929230000_add_organization_profile_fields`; server-side
+  `updateOrganizationProfile` (organization resolved from the caller's own
+  membership — no organization ID accepted — OWNER role enforced
+  server-side, input validated, only allow-listed fields written) exposed
+  through the `updateOrganizationProfileAction` server action with
+  field-level validation feedback and a success state; pure validation
+  module (`src/lib/organization-profile.ts`) shared with the client form;
+  minimal protected settings page (`/app/org/settings`): editable form for
+  the OWNER, read-only profile view for other members; link from `/app/org`.
+  Unknown failures return a generic message (no internals leaked).
 - Organization and owner onboarding foundation: `Organization` and
   `OrganizationMembership` models (`organizations` and
   `organization_memberships` tables: UUID PKs, `Role` enum

@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { requireOrganizationContext } from "@/lib/server/authorization";
 
 /**
@@ -14,6 +16,9 @@ export default async function OrganizationPage() {
     <main>
       <h1>{organization.name}</h1>
       <p>Your role: {membership.role}</p>
+      <p>
+        <Link href="/app/org/settings">Gym settings</Link>
+      </p>
     </main>
   );
 }

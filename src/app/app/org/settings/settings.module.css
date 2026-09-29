@@ -1,0 +1,147 @@
+/* Gym settings screen.
+ *
+ * Intentionally restrained: neutral-first surfaces, borders instead of
+ * shadows, one inherited font family, two weights (400/600), generous
+ * spacing. No decorative effects — functional UI, not a design system.
+ */
+
+.form {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 32rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.input,
+.textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.input:focus-visible,
+.textarea:focus-visible {
+  outline: 2px solid light-dark(#1a1a1a, #e8e8e8);
+  outline-offset: 1px;
+}
+
+.input[aria-invalid="true"],
+.textarea[aria-invalid="true"] {
+  border-color: light-dark(#b3261e, #ff8a80);
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  margin: 0;
+}
+
+.error {
+  font-size: 0.875rem;
+  color: light-dark(#b3261e, #ff8a80);
+  margin: 0;
+}
+
+.actions {
+  margin-top: 0.25rem;
+}
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#1a1a1a, #e8e8e8);
+  background: light-dark(#1a1a1a, #e8e8e8);
+  color: light-dark(#ffffff, #1a1a1a);
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: light-dark(#333333, #d4d4d4);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.notice {
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1.5rem;
+  max-width: 32rem;
+}
+
+.success {
+  border: 1px solid light-dark(#2e7d32, #66bb6a);
+  background: light-dark(#f1f8f1, #122b14);
+  color: light-dark(#1b5e20, #a5d6a7);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+.formError {
+  border: 1px solid light-dark(#b3261e, #ff8a80);
+  background: light-dark(#fdf2f2, #2b1210);
+  color: light-dark(#b3261e, #ff8a80);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+/* Read-only profile view for non-owner members. */
+.profile {
+  display: grid;
+  gap: 0;
+  max-width: 32rem;
+  margin: 0 0 1.5rem;
+}
+
+.row {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid light-dark(#e5e5e5, #3a3a3a);
+}
+
+.row:first-child {
+  padding-top: 0;
+}
+
+.term {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.value {
+  margin: 0;
+}
+
+.empty {
+  color: light-dark(#8a8a8a, #737373);
+}

@@ -108,6 +108,11 @@ model User {
 model Organization {
   id        String   @id @default(uuid())
   name      String
+  // Gym profile fields (ADR 010 §7). Nullable: the onboarding form only
+  // collects the name; details are filled in later on the settings page.
+  phone     String?
+  email     String?
+  address   String?
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

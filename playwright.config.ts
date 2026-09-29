@@ -1,11 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// 127.0.0.1 instead of "localhost": Chromium's DNS resolver on CI runners
-// fails to resolve "localhost" (net::ERR_NAME_NOT_RESOLVED) even though
-// Node.js resolves it fine — the Node-based `request` test and Playwright's
-// own webServer health check pass while every `page.goto` fails. A literal
-// IPv4 address bypasses DNS in both stacks, so the browser and the server
-// always agree on where the app lives.
 const APP_ORIGIN = "http://127.0.0.1:3000";
 
 export default defineConfig({
@@ -22,16 +16,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        launchOptions: {
-          // Never proxy the test browser: the specs only talk to the local
-          // test server, and a proxy can never route to the runner's own
-          // loopback. Without this, Chromium picks up the runner's
-          // *_proxy environment variables and every navigation fails with
-          // net::ERR_NAME_NOT_RESOLVED — even for a literal 127.0.0.1 —
-          // while Node-based checks (webServer probe, `request` fixture)
-          // succeed because Node ignores those variables.
-          args: ["--no-proxy-server"],
-        },
+        channel: "chromium",
       },
     },
   ],

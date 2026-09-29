@@ -54,18 +54,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Browser smoke tests (Playwright)
-        run: |
-          echo "=== proxy env var names (values redacted) ==="
-          env | cut -d= -f1 | grep -i proxy || echo "(no proxy env vars)"
-          echo "=== /etc/hosts ==="
-          cat /etc/hosts
-          echo "=== /etc/resolv.conf ==="
-          cat /etc/resolv.conf
-          npm run test:e2e
-        env:
-          # TEMPORARY DIAGNOSTIC: log the exact Chromium launch command line
-          # to diagnose net::ERR_NAME_NOT_RESOLVED. Revert after diagnosis.
-          DEBUG: pw:browser
+        run: npm run test:e2e
 
       - name: Production build
         run: npm run build

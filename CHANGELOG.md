@@ -61,14 +61,9 @@ All notable changes to this project are documented here, following
   (`node_modules/.prisma/client`), so `tsc --noEmit` failed on every commit
   with `TS2305` (`@prisma/client` has no exported member ...) at the
   Typecheck step.
-- CI: point the Playwright config at `http://127.0.0.1:3000` instead of
-  `http://localhost:3000`, and launch Chromium with `--no-proxy-server`.
-  On the GitHub runner Chromium picks up the runner's `*_proxy` environment
-  variables and every `page.goto` fails with `net::ERR_NAME_NOT_RESOLVED` —
-  even for a literal `127.0.0.1` — while Node-based checks (Playwright's own
-  webServer probe, the `request`-based health test) succeed because Node
-  ignores those variables. The specs only ever talk to the local test
-  server, so bypassing the proxy (and DNS) changes nothing they cover.
+- CI: Playwright uses `http://127.0.0.1:3000` as the test origin.
+- CI: Playwright launches full Chromium via `channel: "chromium"` instead of
+  the bundled headless shell.
 
 ## [0.0.0] - 2026-09-27
 

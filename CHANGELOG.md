@@ -61,6 +61,11 @@ All notable changes to this project are documented here, following
   (`node_modules/.prisma/client`), so `tsc --noEmit` failed on every commit
   with `TS2305` (`@prisma/client` has no exported member ...) at the
   Typecheck step.
+- CI: point the Playwright config at `http://127.0.0.1:3000` instead of
+  `http://localhost:3000`. On the GitHub runner Chromium cannot resolve
+  `localhost` (`net::ERR_NAME_NOT_RESOLVED`) while Node.js resolves it fine,
+  so every `page.goto` smoke test failed even though the app server was up.
+  A literal IP bypasses DNS in both stacks; test coverage is unchanged.
 
 ## [0.0.0] - 2026-09-27
 

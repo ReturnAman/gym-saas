@@ -30,6 +30,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Generate Prisma client
+        # The generated client (node_modules/.prisma/client) is gitignored and
+        # not produced by `npm ci` (no postinstall hook). Typecheck, unit tests
+        # and the app all import model types from `@prisma/client`, which
+        # re-exports the generated files — without this step the Typecheck
+        # step fails with TS2305 (e.g. "has no exported member 'PrismaClient'").
+        run: npm run prisma:generate
+
       - name: Validate Prisma schema
         run: npm run prisma:validate
 

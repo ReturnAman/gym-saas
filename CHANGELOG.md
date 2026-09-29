@@ -55,6 +55,13 @@ All notable changes to this project are documented here, following
   onboarding and members to their organization area. Unauthenticated
   requests to `/app`, `/onboarding`, and `/app/org` redirect to `/sign-in`.
 
+### Fixed
+- CI: run `npm run prisma:generate` in the GitHub Actions workflow before
+  typecheck. A fresh `npm ci` does not produce the generated Prisma client
+  (`node_modules/.prisma/client`), so `tsc --noEmit` failed on every commit
+  with `TS2305` (`@prisma/client` has no exported member ...) at the
+  Typecheck step.
+
 ## [0.0.0] - 2026-09-27
 
 ### Added

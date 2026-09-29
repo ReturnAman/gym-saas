@@ -62,10 +62,13 @@ All notable changes to this project are documented here, following
   with `TS2305` (`@prisma/client` has no exported member ...) at the
   Typecheck step.
 - CI: point the Playwright config at `http://127.0.0.1:3000` instead of
-  `http://localhost:3000`. On the GitHub runner Chromium cannot resolve
-  `localhost` (`net::ERR_NAME_NOT_RESOLVED`) while Node.js resolves it fine,
-  so every `page.goto` smoke test failed even though the app server was up.
-  A literal IP bypasses DNS in both stacks; test coverage is unchanged.
+  `http://localhost:3000`, and launch Chromium with `--no-proxy-server`.
+  On the GitHub runner Chromium picks up the runner's `*_proxy` environment
+  variables and every `page.goto` fails with `net::ERR_NAME_NOT_RESOLVED` —
+  even for a literal `127.0.0.1` — while Node-based checks (Playwright's own
+  webServer probe, the `request`-based health test) succeed because Node
+  ignores those variables. The specs only ever talk to the local test
+  server, so bypassing the proxy (and DNS) changes nothing they cover.
 
 ## [0.0.0] - 2026-09-27
 

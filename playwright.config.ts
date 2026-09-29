@@ -20,7 +20,19 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: {
+          // Never proxy the test browser: the specs only talk to the local
+          // test server, and a proxy can never route to the runner's own
+          // loopback. Without this, Chromium picks up the runner's
+          // *_proxy environment variables and every navigation fails with
+          // net::ERR_NAME_NOT_RESOLVED — even for a literal 127.0.0.1 —
+          // while Node-based checks (webServer probe, `request` fixture)
+          // succeed because Node ignores those variables.
+          args: ["--no-proxy-server"],
+        },
+      },
     },
   ],
   webServer: {

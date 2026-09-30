@@ -88,6 +88,10 @@ model User {
 
   memberships OrganizationMembership[]
 
+  // Member rows linked to this application user (set at OTP onboarding;
+  // NULL until then). Named to avoid clashing with `memberships` above.
+  linkedMembers Member[] @relation("LinkedMembers")
+
   @@map("users")
 }
 
@@ -118,6 +122,9 @@ model Organization {
 
   memberships OrganizationMembership[]
 
+  members           Member[]
+  memberMemberships Membership[]
+
   @@map("organizations")
 }
 
@@ -145,4 +152,83 @@ model OrganizationMembership {
   @@unique([userId, organizationId])
   @@index([organizationId])
   @@map("organization_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Member Management V1 foundation (04-DATABASE-DESIGN §9, §11).
+// ---------------------------------------------------------------------------
+// Member is the gym member as a business entity — a person, not necessarily
+// an application User (a record may exist before the person onboards via
+// OTP). userId is the optional future link set at OTP onboarding; it stays
+// NULL until then. No status column: the product does not define a member
+// lifecycle yet (deactivation is TBD, 17-PRODUCT-UX-SPEC §22); membership
+// status is derived from dates instead. Phone is deliberately NOT unique
+// per organization: duplicates are surfaced to the user for an explicit
+// decision (keep/skip) and never silently merged or blocked at the DB.
+//
+// The composite unique on (organization_id, id) backs the composite foreign
+// key from memberships: it is the database-level guarantee that a
+// membership's organization always matches its member's organization
+// (04-DATABASE-DESIGN §30).
+model Member {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  userId         String?  @map("user_id")
+  name           String
+  phoneNumber    String   @map("phone_number")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation("LinkedMembers", fields: [userId], references: [id], onDelete: SetNull)
+  memberships  Membership[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, phoneNumber])
+  @@map("members")
+}
+
+// Fixed V1 membership plans (product rule — not owner-configurable yet).
+// Stable UPPERCASE values per the schema conventions; never UI labels.
+enum MembershipPlan {
+  MONTHLY
+  THREE_MONTHS
+  SIX_MONTHS
+  TWELVE_MONTHS
+}
+
+// Membership is the member's actual membership period/entitlement —
+// separate from Member by design (17-PRODUCT-UX-SPEC §11). Plans are a
+// fixed V1 enum, not an owner-configurable table (product rule). The agreed
+// fee is stored exactly (Decimal).
+//
+// There is deliberately NO paid_amount column: payment is a separate
+// domain (04-DATABASE-DESIGN §16, §17), and the finalized calculation is
+// Outstanding = charge amount − SUM(confirmed payments). In this slice the
+// payment domain does not exist yet, so paid is always ₹0 and outstanding
+// is the full fee — both UI/domain-derived values, never a persisted
+// payment balance (see deriveMembershipPayments in src/lib/members.ts).
+//
+// Tenant integrity is enforced at the database level, not just in
+// application code: the composite foreign key
+// (organization_id, member_id) → members(organization_id, id) guarantees a
+// membership can never reference a member of a different organization.
+model Membership {
+  id             String         @id @default(uuid())
+  organizationId String         @map("organization_id")
+  memberId       String         @map("member_id")
+  plan           MembershipPlan
+  startDate      DateTime       @map("start_date") @db.Date
+  expiryDate     DateTime       @map("expiry_date") @db.Date
+  fee            Decimal        @db.Decimal(12, 2)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member       Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([memberId])
+  @@map("memberships")
 }

@@ -1,17 +1,35 @@
 # Gym SaaS
 
-A multi-tenant SaaS platform for gyms and fitness studios — memberships,
-class scheduling and booking, trainer management, payments, and a member-facing
-PWA, all under one roof.
+A multi-tenant SaaS platform for small and local gyms — member management,
+memberships, attendance, payments, and a member-facing PWA, with an
+operational dashboard for gym owners.
 
-## What it does
+Gym owners are the paying customers; gym members are the primary daily users
+of the member experience.
 
-- **Memberships & plans** — sell plans, manage subscriptions, trials, freezes, and cancellations.
-- **Class scheduling & booking** — trainers publish timetables; members book, join waitlists, and check in.
-- **Trainer management** — trainer profiles, availability, payroll-relevant session tracking.
-- **Payments** — subscriptions and one-off purchases via a PCI-safe payment provider integration.
-- **Member PWA** — installable mobile app for booking, schedules, and membership self-service.
-- **Admin dashboard** — per-gym analytics, member management, and staff tooling.
+## What it does (planned V1)
+
+- **Members & memberships** — add and manage members, membership plans,
+  membership status, expiry tracking, and renewals.
+- **Attendance** — QR-based member check-in, attendance history, active
+  sessions, and occupancy derived from attendance.
+- **Payments** — membership charges, member payment claims ("I have paid"),
+  owner/staff verification of actual amounts received, partial payments,
+  and system-calculated outstanding balances. Members pay the gym directly
+  (UPI/QR configured per gym); the SaaS never holds gym membership money
+  and V1 integrates no payment gateway.
+- **Staff & roles** — staff management with role-based permissions
+  (OWNER / ADMIN / TRAINER / STAFF / MEMBER), enforced server-side.
+- **Announcements** — gym announcements visible to members.
+- **Operational dashboard** — today's check-ins, occupancy, expiring
+  memberships, outstanding payments, payment verification requests, and a
+  Needs Attention list.
+- **Member PWA** — installable mobile experience for check-in, attendance
+  history, membership and payment status, announcements, and occupancy.
+
+Out of scope for V1: class scheduling/booking, trainer payroll, payment
+gateway integrations, and marketplace/social/workout-program features.
+See `docs/17-PRODUCT-UX-SPEC.md` for the full product UX specification.
 
 ## Repository map
 

@@ -4,9 +4,9 @@
 **Project:** gym-saas  
 **Product:** TBD  
 **Parent Company:** XYZ  
-**Version:** 0.1  
-**Status:** Documentation / Architecture Phase  
-**Last Updated:** 2026-09-29
+**Version:** 0.2  
+**Status:** Implementation foundations established; product UX definition in progress  
+**Last Updated:** 2026-10-01
 
 ---
 
@@ -35,13 +35,37 @@ It is not a replacement for detailed architecture, security, product, database, 
 
 ## 2.1 Overall Status
 
-The project is currently in the:
+The project has moved beyond pure documentation:
 
-> **Documentation, Architecture, and Engineering Planning Phase**
+> **Engineering foundations implemented; product UX definition in progress**
 
-The core product definition and engineering documentation have been established.
+Implemented foundations (see change log, section 39):
 
-Production implementation has not yet begun unless explicitly recorded in this document.
+- Application foundation: Next.js 16 + TypeScript strict, Prisma 7 +
+  PostgreSQL configuration, server-only env validation, Prisma client
+  singleton, `GET /api/health`, Vitest + Playwright smoke tests, ESLint,
+  CI workflow.
+- Clerk authentication foundation: application `User` model, idempotent
+  Clerk→User sync, protected `/app` route, `/sign-in` page.
+- Organization and owner onboarding: `Organization` + `OrganizationMembership`
+  models, owner onboarding flow creating the organization with the creator
+  as OWNER.
+- Gym profile and owner settings: editable gym profile fields
+  (`/app/org/settings`), OWNER-only writes enforced server-side.
+- Member Management V1 foundation (in working tree, uncommitted): `Member`
+  + `Membership` models with migration, fixed four-plan V1 enum, calendar-
+  month expiry derivation, exact-Decimal fee with paid ₹0 / outstanding = fee
+  for new memberships; server-side validation, tenant isolation, and
+  role-based authorization (OWNER/ADMIN/STAFF manage; TRAINER view;
+  MEMBER own-only); routes `/app/org/members`, `/new`, `/[id]`,
+  `/[id]/edit` with search, filters, pagination, live membership summary,
+  duplicate-phone surfacing, and loading/empty/no-results/error states.
+- Prisma/PostgreSQL setup with migrations, naming conventions, and CI
+  validation (`prisma validate`, `prisma generate`).
+
+Not yet implemented: import/WhatsApp migration, payment claims/verification,
+attendance, dashboard, staff management, announcements, notifications,
+production deployment. See section 34.
 
 ---
 
@@ -68,6 +92,7 @@ Production implementation has not yet begun unless explicitly recorded in this d
 | `14-TECH-DECISIONS.md` | Complete |
 | `15-DSA-AND-ENGINEERING.md` | Complete |
 | `16-INTERVIEW-MASTER.md` | Complete |
+| `17-PRODUCT-UX-SPEC.md` | Complete |
 | `20-CURRENT-STATE.md` | Current document |
 
 ---
@@ -922,6 +947,7 @@ gym-saas/
 │   ├── 14-TECH-DECISIONS.md
 │   ├── 15-DSA-AND-ENGINEERING.md
 │   ├── 16-INTERVIEW-MASTER.md
+│   ├── 17-PRODUCT-UX-SPEC.md
 │   ├── 20-CURRENT-STATE.md
 │   │
 │   ├── features/
@@ -961,30 +987,24 @@ These should be introduced deliberately.
 
 # 35. Immediate Next Phase
 
-After the documentation phase, implementation should begin with the smallest meaningful vertical slice rather than attempting to build all features simultaneously.
-
-Recommended initial engineering sequence:
+The immediate product/engineering direction is:
 
 ```text
-1. Finalize remaining technical decisions
-2. Initialize application
-3. Establish TypeScript / lint / formatting / testing
-4. Establish database and migrations
-5. Establish authentication
-6. Establish organization / tenant model
-7. Establish authorization
-8. Build owner onboarding
-9. Build member management
-10. Build member OTP onboarding
-11. Build attendance
-12. Build payments
-13. Build dashboard
-14. Build notifications
-15. Harden security
-16. Deploy pilot
+Product UX definition
+    ↓
+Approved screen design
+    ↓
+Vertical feature implementation
+    ↓
+Local product validation
+    ↓
+GitHub verification
 ```
 
-The exact sequence may be adjusted after implementation planning.
+Implementation proceeds one vertical slice at a time (member management is
+the next candidate feature area), each following the workflow in section 30.
+No feature work begins until its UX is defined and its screen design is
+approved.
 
 ---
 
@@ -1018,9 +1038,12 @@ This reduces the risk of building UI around incorrect authorization or data assu
 
 The immediate priority is:
 
-> Convert the documented architecture into a small, secure, testable working foundation.
+> Define the product UX (`17-PRODUCT-UX-SPEC.md`), get screen designs
+> approved, then implement the next vertical feature slice.
 
-The first implementation should establish the application's structural foundations before adding large amounts of feature code.
+The engineering foundations (identity, organization, membership,
+authorization primitives, database, CI) are established. Feature work now
+builds upward from those foundations, one approved slice at a time.
 
 ---
 
@@ -1050,6 +1073,14 @@ Do not update it for every tiny code change.
 | 2026-09-29 | Authentication provider finalized: Clerk (ADR 001 Accepted; ADR 015 Accepted) | Project Owner |
 | 2026-09-29 | Testing stack finalized: Vitest + Playwright (ADR 003 Accepted) | Project Owner |
 | 2026-09-29 | Application foundation established: Next.js 16 + TypeScript + Prisma 7 + PostgreSQL config, env validation, Prisma client singleton, health endpoint, Vitest + Playwright smoke tests, CI workflow | Project Owner |
+| 2026-09-29 | Clerk authentication foundation: application User model, idempotent Clerk→User sync, protected `/app`, `/sign-in` page | Project Owner |
+| 2026-09-29 | Organization + owner onboarding: Organization/OrganizationMembership models, onboarding flow, creator becomes OWNER | Project Owner |
+| 2026-09-30 | Gym profile and owner settings: editable organization profile (`/app/org/settings`), server-side OWNER enforcement | Project Owner |
+| 2026-10-01 | Member Management V1 UX finalized in `docs/17-PRODUCT-UX-SPEC.md`: migration-first assumption, manual add member (`/app/org/members/new`) with membership summary, import members (CSV/Excel/image/scan/PDF at UX level), human-review extraction flow, data-quality and duplicate-review rules, member list/details/edit routes and states | Project Owner |
+| 2026-10-01 | Member Management V1 UX amended in `docs/17-PRODUCT-UX-SPEC.md`: WhatsApp-based migration path added as a first-class option ("Send on WhatsApp" in Add Members entry); unified import inbox / migration job concept (all sources → extraction → validation → mandatory human review → confirmation → creation); "submission received" distinguished from "members imported"; new TBDs 18–21 (WhatsApp receiving approach, gym association mechanism, media support, early-rollout operations). Specification only — no implementation claims | Project Owner |
+| 2026-10-01 | Member Management V1 visual design specification added as `docs/17-PRODUCT-UX-SPEC.md` §20.1: implementation-ready screen spec for all ten screens (members list desktop+mobile with five states, Add Members three-choice step, manual add with live membership summary, import entry, processing states, import review, duplicate review, WhatsApp handoff, member details, edit member) plus shared visual language and Figma frame checklist. No product decisions changed; no repo Figma workflow exists, so the spec lives in the UX document. Design preparation only — no implementation claims | Project Owner |
+| 2026-10-01 | Member Management V1 first vertical slice implemented (uncommitted, working tree): `Member` + `Membership` Prisma models and migration `20261001020000_add_members_and_memberships` (fixed V1 plan enum, calendar-month expiry, Decimal fee, no persisted paid amount — Paid = ₹0 / Outstanding = Fee as domain-derived values; composite FK `memberships(organization_id, member_id)` → `members(organization_id, id)` enforcing member/membership organization match at the database level); pure domain module (`src/lib/members.ts`) and server service (`src/lib/server/members.ts`) with validation, tenant isolation, and role-based authorization; routes `/app/org/members`, `/new`, `/[id]`, `/[id]/edit` with search/filters/pagination, live summary, duplicate-phone surfacing, and full state coverage; 58 new tests (105 total) green; lint/typecheck/build green. No import/OCR/WhatsApp/payment/attendance systems built | Project Owner |
+| 2026-10-01 | Member Management V1 corrections (uncommitted, working tree): removed `Membership.paid_amount` per the finalized payment architecture (Outstanding = charge − SUM(confirmed payments); payment claims/confirmations are a later slice, no payment tables created); added database-level tenant integrity via composite unique `members(organization_id, id)` + composite FK, with migration-coherence tests and an opt-in real-database enforcement test (`RUN_DB_TESTS=true`) | Project Owner |
 
 ---
 

@@ -17,6 +17,9 @@ export default async function OrganizationPage() {
       <h1>{organization.name}</h1>
       <p>Your role: {membership.role}</p>
       <p>
+        <Link href="/app/org/members">Members</Link>
+      </p>
+      <p>
         <Link href="/app/org/settings">Gym settings</Link>
       </p>
     </main>

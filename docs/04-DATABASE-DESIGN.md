@@ -724,6 +724,12 @@ Member.userId
 Membership.memberId
     → Member.id
 
+Membership.(organizationId, memberId)
+    → Member.(organizationId, id)
+    (composite: the membership's organization must always match the member's
+    organization; enforced by the database via the composite foreign key,
+    backed by a composite unique constraint on members(organization_id, id))
+
 Membership.membershipPlanId
     → MembershipPlan.id
 

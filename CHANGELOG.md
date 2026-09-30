@@ -6,6 +6,41 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Added
+- Member Management V1 first vertical slice (uncommitted, working tree):
+  `Member` + `Membership` Prisma models with migration
+  `20261001020000_add_members_and_memberships` (fixed four-plan V1 enum,
+  calendar-month expiry derivation, exact Decimal fee, no persisted paid
+  amount — paid is always ₹0 / outstanding is the full fee as
+  domain-derived values per the finalized payment architecture, and a
+  composite foreign key enforces that a membership's organization always
+  matches its member's organization at the database level); pure domain module (`src/lib/members.ts`) shared by client and server;
+  server service (`src/lib/server/members.ts`) with server-side validation,
+  tenant isolation, duplicate-phone surfacing, and role-based authorization
+  per the V1 permission matrix (OWNER/ADMIN/STAFF manage, TRAINER view,
+  MEMBER own-only); routes `/app/org/members` (search, filters, pagination,
+  loading/empty/no-results/error states), `/app/org/members/new` (live
+  membership summary, no default start date, idempotent submit),
+  `/app/org/members/[id]` (Member/Membership/Financial sections plus an
+  attendance placeholder), and `/app/org/members/[id]/edit`
+  (identity/contact only — membership terms never rewritten); import and
+  WhatsApp remain clearly-marked unavailable entry points. 58 new tests
+  (105 total) green; ESLint, typecheck, and production build green.
+- Product UX specification (`docs/17-PRODUCT-UX-SPEC.md`): product UX
+  principles, user types, product areas, information architecture,
+  navigation model, V1 screen inventory (owner console + member PWA),
+  dashboard/members/member-details UX, forms and state principles,
+  responsive behavior, permission UX, payment UX (claim vs. confirmed),
+  notification/WhatsApp UX, accessibility baseline, Figma handoff
+  principles, V1/V1.5/Later scope, and open UX decisions (TBDs).
+- Current-state alignment: `docs/20-CURRENT-STATE.md` now reflects the
+  implemented engineering foundations (auth, org onboarding/settings,
+  Prisma/PostgreSQL, tests, CI) and sets the direction to product UX
+  definition → approved screen design → vertical feature implementation →
+  local product validation → GitHub verification.
+- README product description aligned with the approved focused direction
+  (members, memberships, attendance, payments, staff/roles, announcements,
+  operational dashboard, member PWA); removed unplanned V1 claims
+  (class booking, trainer payroll, payment-provider integration).
 - Initial repository scaffold: documentation suite (`docs/00`–`docs/20`),
   agent operating manual (`AGENTS.md`), AI context (`AI_CONTEXT.md`), CI
   workflow, and issue/PR templates.

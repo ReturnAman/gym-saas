@@ -1,0 +1,593 @@
+/* Members screens.
+ *
+ * Same restrained language as the settings screen: neutral-first surfaces,
+ * borders instead of shadows, one inherited font family, two weights
+ * (400/600), generous spacing. Status badges always pair a tint with a
+ * text label (never color alone).
+ */
+
+.pageHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.pageHeader h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+/* --- Toolbar: search + filters --- */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.searchInput,
+.select {
+  font: inherit;
+  color: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.searchInput {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.searchInput:focus-visible,
+.select:focus-visible {
+  outline: 2px solid light-dark(#1a1a1a, #e8e8e8);
+  outline-offset: 1px;
+}
+
+/* --- Members table (desktop) --- */
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  white-space: nowrap;
+}
+
+.table th {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: light-dark(#f7f7f7, #1f1f1f);
+}
+
+.rowLink {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- Member cards (mobile) --- */
+
+.cards {
+  display: none;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: 0.75rem;
+}
+
+.card {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.cardName {
+  font-weight: 600;
+  margin: 0;
+}
+
+.cardMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem 1rem;
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  margin: 0;
+}
+
+@media (max-width: 44rem) {
+  .tableWrap {
+    display: none;
+  }
+  .cards {
+    display: grid;
+  }
+}
+
+/* --- Status badges: tint + text label, never color alone --- */
+
+.badge {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.badgeActive {
+  color: light-dark(#1b5e20, #a5d6a7);
+  background: light-dark(#f1f8f1, #122b14);
+  border-color: light-dark(#a5d6a7, #2e7d32);
+}
+
+.badgeExpiring {
+  color: light-dark(#8a5a00, #ffcc66);
+  background: light-dark(#fdf6e3, #2b2110);
+  border-color: light-dark(#e0c97a, #8a6d1f);
+}
+
+.badgeExpired {
+  color: light-dark(#5f5f5f, #a3a3a3);
+  background: light-dark(#f5f5f5, #242424);
+  border-color: light-dark(#d4d4d4, #525252);
+}
+
+.badgePaid {
+  color: light-dark(#1b5e20, #a5d6a7);
+  background: light-dark(#f1f8f1, #122b14);
+  border-color: light-dark(#a5d6a7, #2e7d32);
+}
+
+.badgeUnpaid {
+  color: light-dark(#b3261e, #ff8a80);
+  background: light-dark(#fdf2f2, #2b1210);
+  border-color: light-dark(#f0b4b0, #8a2a25);
+}
+
+/* --- Pagination --- */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.pagination nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.pageLink {
+  font: inherit;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.pageLink:hover {
+  background: light-dark(#f0f0f0, #2a2a2a);
+}
+
+span.pageLink {
+  opacity: 0.45;
+}
+
+/* --- Empty / no-results / error states --- */
+
+.stateBox {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  display: grid;
+  gap: 0.75rem;
+  justify-items: center;
+}
+
+.stateBox h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.stateBox p {
+  margin: 0;
+  max-width: 30rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.stateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+/* --- Buttons --- */
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#1a1a1a, #e8e8e8);
+  background: light-dark(#1a1a1a, #e8e8e8);
+  color: light-dark(#ffffff, #1a1a1a);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.button:hover:not(:disabled) {
+  background: light-dark(#333333, #d4d4d4);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.secondaryButton {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: light-dark(#f0f0f0, #2a2a2a);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.comingSoon {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: light-dark(#8a8a8a, #737373);
+  border: 1px dashed light-dark(#d4d4d4, #525252);
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  margin-left: 0.5rem;
+  white-space: nowrap;
+}
+
+/* --- Forms --- */
+
+.form {
+  display: grid;
+  gap: 1.5rem;
+  max-width: 32rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.375rem;
+}
+
+.label {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.input,
+.select,
+.textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.input:focus-visible,
+.select:focus-visible {
+  outline: 2px solid light-dark(#1a1a1a, #e8e8e8);
+  outline-offset: 1px;
+}
+
+.input[aria-invalid="true"],
+.select[aria-invalid="true"] {
+  border-color: light-dark(#b3261e, #ff8a80);
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  margin: 0;
+}
+
+.error {
+  font-size: 0.875rem;
+  color: light-dark(#b3261e, #ff8a80);
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.25rem;
+}
+
+.success {
+  border: 1px solid light-dark(#2e7d32, #66bb6a);
+  background: light-dark(#f1f8f1, #122b14);
+  color: light-dark(#1b5e20, #a5d6a7);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+.formError {
+  border: 1px solid light-dark(#b3261e, #ff8a80);
+  background: light-dark(#fdf2f2, #2b1210);
+  color: light-dark(#b3261e, #ff8a80);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0;
+}
+
+/* --- Live membership summary --- */
+
+.summary {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+  max-width: 32rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.summary h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.summary dl {
+  display: grid;
+  gap: 0.375rem;
+  margin: 0;
+}
+
+.summaryRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9375rem;
+}
+
+.summaryRow dt {
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.summaryRow dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* --- Duplicate warning --- */
+
+.duplicateWarning {
+  border: 1px solid light-dark(#e0c97a, #8a6d1f);
+  background: light-dark(#fdf6e3, #2b2110);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+  max-width: 32rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.duplicateWarning h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.duplicateWarning p {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.duplicateList {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9375rem;
+}
+
+/* --- Details page sections --- */
+
+.sections {
+  display: grid;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.section {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+}
+
+.section h2 {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+}
+
+.details {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.detailRow {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.625rem 0;
+  border-bottom: 1px solid light-dark(#e5e5e5, #3a3a3a);
+}
+
+.detailRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.detailRow:first-child {
+  padding-top: 0;
+}
+
+.term {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.value {
+  margin: 0;
+}
+
+.empty {
+  color: light-dark(#8a8a8a, #737373);
+}
+
+.detailActions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+/* --- Add-members choice dialog --- */
+
+.dialog {
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+  max-width: 26rem;
+  width: calc(100% - 3rem);
+}
+
+.dialog::backdrop {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.dialog h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+.dialog p {
+  margin: 0 0 1rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  font-size: 0.9375rem;
+}
+
+.choiceList {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font: inherit;
+  padding: 0.875rem 1rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+a.choice:hover,
+button.choice:hover:not(:disabled) {
+  background: light-dark(#f7f7f7, #1f1f1f);
+}
+
+.choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+
+.choiceText {
+  display: grid;
+  gap: 0.125rem;
+}
+
+.choiceTitle {
+  font-weight: 600;
+}
+
+.choiceHint {
+  font-size: 0.8125rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}

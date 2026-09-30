@@ -53,6 +53,43 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      - name: TEMPORARY DIAGNOSTIC - chromium loopback networking (REVERT AFTER USE)
+        run: |
+          echo "=== building production bundle (same as webServer) ==="
+          npm run build >/tmp/diag-build.log 2>&1
+          echo "=== starting server in background ==="
+          (npm start >/tmp/diag-server.log 2>&1 & echo $! >/tmp/diag-server.pid)
+          echo "=== waiting for readiness ==="
+          for i in $(seq 1 30); do
+            if curl -sf --max-time 2 http://127.0.0.1:3000/api/health; then break; fi
+            sleep 2
+          done
+          echo "=== 1. listening sockets ==="
+          (ss -tlnp | grep ':3000') || echo "(no :3000 listener in ss output)"
+          echo "=== 2. proxy env var names ==="
+          env | cut -d= -f1 | grep -i proxy || echo "(no proxy env vars)"
+          echo "=== 3. resolv.conf ==="
+          cat /etc/resolv.conf
+          echo "=== 4. curl -> loopback ==="
+          curl -sv --max-time 10 http://127.0.0.1:3000/api/health || echo "curl exit code: $?"
+          CHROME=$(ls -d ~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome 2>/dev/null | head -1)
+          echo "chrome binary: ${CHROME:-NOT FOUND}"
+          echo "=== 5. raw chromium -> loopback ==="
+          "$CHROME" --headless=new --disable-gpu --dump-dom --virtual-time-budget=8000 http://127.0.0.1:3000/api/health 2>/tmp/diag-chrome-local.err | head -c 600
+          echo "chrome->loopback exit code: ${PIPESTATUS[0]}"
+          echo "chrome stderr (loopback):"; head -c 800 /tmp/diag-chrome-local.err || true
+          echo "=== 6/7. raw chromium -> external ==="
+          "$CHROME" --headless=new --disable-gpu --dump-dom --virtual-time-budget=8000 https://example.com 2>/tmp/diag-chrome-ext.err | head -c 600
+          echo "chrome->external exit code: ${PIPESTATUS[0]}"
+          echo "chrome stderr (external):"; head -c 800 /tmp/diag-chrome-ext.err || true
+          echo "=== stopping diagnostic server ==="
+          kill "$(cat /tmp/diag-server.pid)" 2>/dev/null || true
+          pkill -f "next-server" || true
+          sleep 1
+          (ss -tlnp | grep ':3000') && echo "WARNING: port 3000 still in use" || echo "port 3000 free"
+        env:
+          APP_URL: http://127.0.0.1:3000
+
       - name: Browser smoke tests (Playwright)
         run: npm run test:e2e
 

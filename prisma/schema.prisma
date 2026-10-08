@@ -130,6 +130,7 @@ model Organization {
   memberMemberships Membership[]
   payments          Payment[]
   auditLogs         AuditLog[]
+  memberOtpChallenges MemberOtpChallenge[]
 
   @@map("organizations")
 }
@@ -320,4 +321,47 @@ model AuditLog {
   @@index([organizationId])
   @@index([organizationId, targetType, targetId])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Member OTP foundation (02-USER-FLOWS §9; provider: 2Factor AUTOGEN/VERIFY).
+// ---------------------------------------------------------------------------
+// A MemberOtpChallenge is one OTP request for member authentication. The
+// OTP itself is generated and verified by the SMS provider — it is NEVER
+// stored here (there is deliberately no code column), never logged, and
+// never returned to the client. Only the provider's session identifier is
+// persisted, server-side, so VERIFY can be called against it.
+//
+// There is deliberately NO Member or User foreign key: at request time the
+// phone number is discovery only (member phones are not unique within an
+// organization, and no authenticated user exists yet). Linking a verified
+// challenge to a Member/User is a later slice. The challenge rows double
+// as the database-backed rate-limit/cooldown record (ADR 019) and as the
+// OTP audit trail for this foundation: OTP events cannot use AuditLog yet
+// because that model requires an authenticated actor (actorUserId).
+enum OtpChallengeStatus {
+  PENDING
+  VERIFIED
+  EXPIRED
+  SUPERSEDED
+  LOCKED
+}
+
+model MemberOtpChallenge {
+  id                String             @id @default(uuid())
+  organizationId    String             @map("organization_id")
+  phoneNumber       String             @map("phone_number")
+  providerSessionId String             @map("provider_session_id")
+  status            OtpChallengeStatus @default(PENDING)
+  attempts          Int                @default(0)
+  expiresAt         DateTime           @map("expires_at") @db.Timestamptz(6)
+  verifiedAt        DateTime?          @map("verified_at") @db.Timestamptz(6)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, phoneNumber, createdAt])
+  @@map("member_otp_challenges")
 }

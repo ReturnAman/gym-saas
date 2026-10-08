@@ -79,8 +79,17 @@ datasource db {
 //   constraint so repeated synchronization can never create duplicates.
 // - Phone is deliberately NOT stored here and is NOT a unique key.
 model User {
-  id          String   @id @default(uuid())
-  clerkUserId String   @unique @map("clerk_user_id")
+  id String @id @default(uuid())
+  // Identity is unified on this model (ADR 021): a User may carry a Clerk
+  // identity (owners/staff), a verified phone identity (members), or both.
+  // Both identifiers are nullable and unique; PostgreSQL unique indexes
+  // admit multiple NULLs, so single-identity users never collide. A
+  // non-null phone number is globally unique — one verified phone, one
+  // User. Phone-backed member users have clerkUserId = NULL and are
+  // created only by the member linking flow; the member OTP path never
+  // reads or writes Clerk state (two-hats rule, ADR 021).
+  clerkUserId String? @unique @map("clerk_user_id")
+  phoneNumber String? @unique @map("phone_number")
   // Explicit timestamptz: Prisma's default PostgreSQL DateTime mapping is
   // `timestamp` (no time zone); the convention requires UTC timestamptz.
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -95,6 +104,9 @@ model User {
   // Payments this user confirmed, and audit events they performed.
   confirmedPayments Payment[] @relation("ConfirmedPayments")
   auditEvents       AuditLog[]
+
+  // Gym-scoped member sessions (phone-OTP path only; never Clerk).
+  memberSessions MemberSession[]
 
   @@map("users")
 }
@@ -131,6 +143,7 @@ model Organization {
   payments          Payment[]
   auditLogs         AuditLog[]
   memberOtpChallenges MemberOtpChallenge[]
+  memberSessions    MemberSession[]
 
   @@map("organizations")
 }
@@ -334,11 +347,12 @@ model AuditLog {
 //
 // There is deliberately NO Member or User foreign key: at request time the
 // phone number is discovery only (member phones are not unique within an
-// organization, and no authenticated user exists yet). Linking a verified
-// challenge to a Member/User is a later slice. The challenge rows double
-// as the database-backed rate-limit/cooldown record (ADR 019) and as the
-// OTP audit trail for this foundation: OTP events cannot use AuditLog yet
-// because that model requires an authenticated actor (actorUserId).
+// organization, and no authenticated user exists yet). Linking consumes a
+// VERIFIED challenge via consumedAt (see member-linking / ADR 021). The
+// challenge rows double as the database-backed rate-limit/cooldown record
+// (ADR 019) and as the OTP audit trail for this foundation: OTP events
+// cannot use AuditLog yet because that model requires an authenticated
+// actor (actorUserId).
 enum OtpChallengeStatus {
   PENDING
   VERIFIED
@@ -356,6 +370,11 @@ model MemberOtpChallenge {
   attempts          Int                @default(0)
   expiresAt         DateTime           @map("expires_at") @db.Timestamptz(6)
   verifiedAt        DateTime?          @map("verified_at") @db.Timestamptz(6)
+  // Set exactly once, atomically, when a VERIFIED challenge is consumed
+  // by member linking (ADR 021). VERIFIED means "OTP proven";
+  // consumedAt means "used to link + create a session". A challenge with
+  // consumedAt set can never be linked again (replay protection).
+  consumedAt        DateTime?          @map("consumed_at") @db.Timestamptz(6)
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -364,4 +383,39 @@ model MemberOtpChallenge {
   @@index([organizationId])
   @@index([organizationId, phoneNumber, createdAt])
   @@map("member_otp_challenges")
+}
+
+// ---------------------------------------------------------------------------
+// Member sessions (ADR 021).
+// ---------------------------------------------------------------------------
+// A MemberSession is a gym-scoped, application-managed session for the
+// phone-OTP member path — entirely separate from Clerk sessions, which
+// continue to serve owners/staff. A session attests "this User, in this
+// Organization, via a verified phone" and nothing more: authorization
+// still comes from the live OrganizationMembership row at resolve time.
+//
+// Only the SHA-256 hash of the session token is stored. The raw token
+// (32 cryptographically random bytes) exists solely in the member's
+// HttpOnly cookie; it is never persisted, logged, or returned in a body.
+// Revocation is server-side (revokedAt) — clearing the cookie alone is
+// never the logout mechanism.
+model MemberSession {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  organizationId String    @map("organization_id")
+  tokenHash      String    @unique @map("token_hash")
+  // Absolute lifetime: 30 days from creation. Idle lifetime: 7 days from
+  // lastSeenAt. Both enforced server-side at resolve time (ADR 021).
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("member_sessions")
 }

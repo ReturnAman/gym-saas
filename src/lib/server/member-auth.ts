@@ -5,6 +5,10 @@ import { randomUUID } from "node:crypto";
 import { validatePhoneNumber } from "../members";
 import { db } from "./db";
 import {
+  linkVerifiedChallenge,
+  type MemberLinkResult,
+} from "./member-linking";
+import {
   OtpRateLimitError,
   OtpVerificationError,
   issueChallenge,
@@ -16,10 +20,10 @@ import {
  * (02-USER-FLOWS §9). Routes call only this module.
  *
  * This is a SEPARATE authentication path from Clerk (which continues to
- * serve owners/staff untouched): no Clerk session is read or created here,
- * and no member session or account linking happens in this foundation —
- * a successful verify produces a VERIFIED challenge that a later linking
- * slice consumes.
+ * serve owners/staff untouched): no Clerk session is read or created here.
+ * A successful verify produces a VERIFIED challenge; linking consumes it
+ * to create the phone-backed User, Member link, and gym-scoped member
+ * session (ADR 021).
  *
  * Anti-enumeration contract: requestMemberOtp always resolves with a
  * challenge id. When the phone is not eligible — or a rate limit trips —
@@ -92,4 +96,17 @@ export async function verifyMemberOtp(input: {
     otp,
   });
   return { verified: result.verified };
+}
+
+/**
+ * Consume a VERIFIED challenge to link the member and create a gym-scoped
+ * member session (ADR 021). Delegates to the linking service; the caller
+ * (route) sets the session cookie from the returned raw token only after
+ * this resolves — i.e. after the linking transaction has committed.
+ */
+export async function linkMember(input: {
+  organizationId: string;
+  challengeId: string;
+}): Promise<MemberLinkResult> {
+  return linkVerifiedChallenge(input);
 }

@@ -27,3 +27,4 @@ and format.
 | [018](018-CONFIGURATION-AND-ENVIRONMENT-STRATEGY.md) | Configuration and Environment Strategy | Proposed | 2026-09-28 |
 | [019](019-API-SECURITY-AND-RATE-LIMITING.md) | API Security and Rate Limiting Strategy | Proposed | 2026-09-28 |
 | [020](020-SECURITY-HEADERS-AND-BROWSER-SECURITY.md) | Security Headers and Browser Security | Proposed | 2026-09-28 |
+| [021](021-MEMBER-AUTHENTICATION-AND-SESSIONS.md) | Member Authentication and Sessions | Accepted | 2026-10-09 |

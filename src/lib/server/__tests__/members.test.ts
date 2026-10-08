@@ -4,26 +4,35 @@ import { Prisma } from "@prisma/client";
 const {
   mockTransaction,
   mockOrgMembershipFindFirst,
+  mockOrgMembershipFindMany,
   mockMemberFindMany,
   mockMemberFindFirst,
   mockMemberCreate,
   mockMemberUpdate,
   mockMemberCount,
   mockMembershipCreate,
+  mockPaymentGroupBy,
+  mockPaymentFindMany,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
+  mockOrgMembershipFindMany: vi.fn(),
   mockMemberFindMany: vi.fn(),
   mockMemberFindFirst: vi.fn(),
   mockMemberCreate: vi.fn(),
   mockMemberUpdate: vi.fn(),
   mockMemberCount: vi.fn(),
   mockMembershipCreate: vi.fn(),
+  mockPaymentGroupBy: vi.fn(),
+  mockPaymentFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
   db: {
-    organizationMembership: { findFirst: mockOrgMembershipFindFirst },
+    organizationMembership: {
+      findFirst: mockOrgMembershipFindFirst,
+      findMany: mockOrgMembershipFindMany,
+    },
     member: {
       findMany: mockMemberFindMany,
       findFirst: mockMemberFindFirst,
@@ -31,6 +40,7 @@ vi.mock("@/lib/server/db", () => ({
       update: mockMemberUpdate,
       count: mockMemberCount,
     },
+    payment: { groupBy: mockPaymentGroupBy, findMany: mockPaymentFindMany },
     $transaction: mockTransaction,
   },
 }));
@@ -96,6 +106,10 @@ function mockSuccessfulCreate() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockOwnerScope();
+  // Default: no confirmed payments anywhere (sums derive paid = ₹0).
+  mockPaymentGroupBy.mockResolvedValue([]);
+  mockPaymentFindMany.mockResolvedValue([]);
+  mockOrgMembershipFindMany.mockResolvedValue([]);
 });
 
 describe("getMemberPermissions", () => {
@@ -105,6 +119,7 @@ describe("getMemberPermissions", () => {
         canView: true,
         canCreate: true,
         canEdit: true,
+        canRecordPayment: true,
       });
     }
   });
@@ -114,6 +129,7 @@ describe("getMemberPermissions", () => {
       canView: true,
       canCreate: false,
       canEdit: false,
+      canRecordPayment: false,
     });
   });
 
@@ -122,6 +138,7 @@ describe("getMemberPermissions", () => {
       canView: false,
       canCreate: false,
       canEdit: false,
+      canRecordPayment: false,
     });
   });
 });
@@ -300,8 +317,117 @@ describe("getMemberDetail", () => {
   });
 });
 
-describe("updateMember", () => {
-  const UPDATE = { name: "Rahul S", phoneNumber: "9000000001" };
+describe("payments derivation (list & detail)", () => {
+  const MEMBERSHIP_ID = "d47a1c5b-8e3f-4a2b-9c1d-001122334455";
+
+  function memberRow() {
+    return {
+      id: MEMBER_ID,
+      name: "Rahul Sharma",
+      phoneNumber: "9876543210",
+      userId: null,
+      memberships: [
+        {
+          id: MEMBERSHIP_ID,
+          plan: "MONTHLY",
+          startDate: new Date(Date.UTC(2026, 8, 1)),
+          expiryDate: new Date(Date.UTC(2099, 0, 1)),
+          fee: new Prisma.Decimal("6000"),
+        },
+      ],
+    };
+  }
+
+  function mockPaidSum(rupees: string) {
+    mockPaymentGroupBy.mockResolvedValue([
+      { membershipId: MEMBERSHIP_ID, _sum: { amount: new Prisma.Decimal(rupees) } },
+    ]);
+  }
+
+  it("derives PARTIALLY_PAID and outstanding from confirmed payment sums", async () => {
+    mockMemberCount.mockResolvedValue(1);
+    mockMemberFindMany.mockResolvedValue([memberRow()]);
+    mockPaidSum("2500");
+
+    const result = await listMembers(USER_ID, {});
+    expect(result.items[0]).toMatchObject({
+      paymentStatus: "PARTIALLY_PAID",
+      paidPaise: 250_000,
+      outstandingPaise: 350_000,
+    });
+    // Sums are always tenant-scoped.
+    expect(mockPaymentGroupBy.mock.calls[0]?.[0].where.organizationId).toBe(ORG_ID);
+  });
+
+  it("derives OVERPAID when confirmed sums exceed the fee", async () => {
+    mockMemberCount.mockResolvedValue(1);
+    mockMemberFindMany.mockResolvedValue([memberRow()]);
+    mockPaidSum("7000");
+
+    const result = await listMembers(USER_ID, {});
+    expect(result.items[0]).toMatchObject({
+      paymentStatus: "OVERPAID",
+      paidPaise: 700_000,
+      // Outstanding floors at ₹0 on overpayment; the paid total remains
+      // the actual confirmed sum (₹7,000 against a ₹6,000 fee).
+      outstandingPaise: 0,
+    });
+  });
+
+  it("makes the PARTIALLY_PAID list filter functional", async () => {
+    mockMemberFindMany.mockResolvedValue([memberRow()]);
+    mockPaidSum("2500");
+
+    const partial = await listMembers(USER_ID, { paymentStatus: "PARTIALLY_PAID" });
+    expect(partial.total).toBe(1);
+    const paid = await listMembers(USER_ID, { paymentStatus: "PAID" });
+    expect(paid.total).toBe(0);
+    const unpaid = await listMembers(USER_ID, { paymentStatus: "UNPAID" });
+    expect(unpaid.total).toBe(0);
+  });
+
+  it("returns payment history with the member detail", async () => {
+    mockMemberFindFirst.mockResolvedValue(memberRow());
+    mockPaidSum("2500");
+    mockPaymentFindMany.mockResolvedValue([
+      {
+        id: "payment-id",
+        amount: new Prisma.Decimal("2500"),
+        paymentMethod: "UPI",
+        reference: "UTR123",
+        confirmedAt: new Date(Date.UTC(2026, 8, 15, 10, 30)),
+        confirmedBy: USER_ID,
+      },
+    ]);
+    mockOrgMembershipFindMany.mockResolvedValue([
+      { userId: USER_ID, role: "OWNER" },
+    ]);
+
+    const detail = await getMemberDetail(USER_ID, MEMBER_ID);
+    expect(detail?.membership).toMatchObject({
+      paidPaise: 250_000,
+      outstandingPaise: 350_000,
+      paymentStatus: "PARTIALLY_PAID",
+    });
+    expect(detail?.membership?.payments).toEqual([
+      {
+        id: "payment-id",
+        amountPaise: 250_000,
+        paymentMethod: "UPI",
+        reference: "UTR123",
+        confirmedAt: new Date(Date.UTC(2026, 8, 15, 10, 30)).toISOString(),
+        confirmedByRole: "OWNER",
+      },
+    ]);
+    // History lookups are tenant-scoped too.
+    expect(mockPaymentFindMany.mock.calls[0]?.[0].where).toEqual({
+      organizationId: ORG_ID,
+      membershipId: MEMBERSHIP_ID,
+    });
+  });
+});
+
+describe("updateMember", () => {  const UPDATE = { name: "Rahul S", phoneNumber: "9000000001" };
 
   function mockExistingMember() {
     mockMemberFindFirst.mockResolvedValue({ id: MEMBER_ID });

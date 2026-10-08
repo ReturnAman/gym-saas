@@ -92,6 +92,10 @@ model User {
   // NULL until then). Named to avoid clashing with `memberships` above.
   linkedMembers Member[] @relation("LinkedMembers")
 
+  // Payments this user confirmed, and audit events they performed.
+  confirmedPayments Payment[] @relation("ConfirmedPayments")
+  auditEvents       AuditLog[]
+
   @@map("users")
 }
 
@@ -124,6 +128,8 @@ model Organization {
 
   members           Member[]
   memberMemberships Membership[]
+  payments          Payment[]
+  auditLogs         AuditLog[]
 
   @@map("organizations")
 }
@@ -182,6 +188,7 @@ model Member {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User?        @relation("LinkedMembers", fields: [userId], references: [id], onDelete: SetNull)
   memberships  Membership[]
+  payments     Payment[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -201,19 +208,21 @@ enum MembershipPlan {
 // Membership is the member's actual membership period/entitlement —
 // separate from Member by design (17-PRODUCT-UX-SPEC §11). Plans are a
 // fixed V1 enum, not an owner-configurable table (product rule). The agreed
-// fee is stored exactly (Decimal).
+// fee is stored exactly (Decimal) and remains the membership's total
+// charge for Payments V1 — there is deliberately no separate Charge model.
 //
-// There is deliberately NO paid_amount column: payment is a separate
-// domain (04-DATABASE-DESIGN §16, §17), and the finalized calculation is
-// Outstanding = charge amount − SUM(confirmed payments). In this slice the
-// payment domain does not exist yet, so paid is always ₹0 and outstanding
-// is the full fee — both UI/domain-derived values, never a persisted
-// payment balance (see deriveMembershipPayments in src/lib/members.ts).
+// There is deliberately NO paid_amount column: payments are separate
+// records (see Payment below), and the finalized calculation is
+// Outstanding = fee − SUM(confirmed payments). Paid/outstanding are always
+// derived from the payment records, never a persisted balance (see
+// deriveMembershipPayments in src/lib/members.ts).
 //
 // Tenant integrity is enforced at the database level, not just in
 // application code: the composite foreign key
 // (organization_id, member_id) → members(organization_id, id) guarantees a
 // membership can never reference a member of a different organization.
+// The composite unique on (organization_id, id) likewise backs the
+// composite foreign keys from payments.
 model Membership {
   id             String         @id @default(uuid())
   organizationId String         @map("organization_id")
@@ -227,8 +236,88 @@ model Membership {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   member       Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
+  payments     Payment[]
 
+  @@unique([organizationId, id])
   @@index([organizationId])
   @@index([memberId])
   @@map("memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Payments V1 (04-DATABASE-DESIGN §14, §16, §17) and audit foundation
+// (ADR 017).
+// ---------------------------------------------------------------------------
+// Payment is a confirmed payment received by the gym — money moves directly
+// between the member and the gym; the SaaS only records it. Member payment
+// claims (04-DATABASE-DESIGN §13) are deliberately NOT modeled yet: member
+// OTP onboarding/linking does not exist, so a member cannot submit a claim;
+// claims arrive as a later slice. In V1 an authorized staff user records a
+// payment that has actually been received (confirmedBy/confirmedAt).
+//
+// Confirmed payments are financial history: the application offers no edit
+// or delete path for them, and corrections will use explicit
+// reversal/adjustment records in a future slice — never silent rewrites.
+//
+// Tenant integrity mirrors Membership's: composite foreign keys
+// (organization_id, member_id) → members(organization_id, id) and
+// (organization_id, membership_id) → memberships(organization_id, id)
+// guarantee a payment can never reference a member or membership of a
+// different organization.
+enum PaymentMethod {
+  UPI
+  CASH
+  CARD
+  OTHER
+}
+
+model Payment {
+  id             String        @id @default(uuid())
+  organizationId String        @map("organization_id")
+  memberId       String        @map("member_id")
+  membershipId   String        @map("membership_id")
+  amount         Decimal       @db.Decimal(12, 2)
+  paymentMethod  PaymentMethod @map("payment_method")
+  // Optional free-text reference (e.g. a UPI transaction id) — recorded when
+  // the gym has one; not required for any method in V1.
+  reference      String?
+  confirmedAt    DateTime      @map("confirmed_at") @db.Timestamptz(6)
+  // The staff user who recorded/confirmed receipt of this payment.
+  confirmedBy    String        @map("confirmed_by")
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member        Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
+  membership    Membership   @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Cascade)
+  confirmedByUser User       @relation("ConfirmedPayments", fields: [confirmedBy], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([memberId])
+  @@index([membershipId])
+  @@map("payments")
+}
+
+// Minimal audit log (ADR 017). Append-only: events are facts about things
+// that already happened, so there is no updated_at. `event` is a stable
+// string code (e.g. PAYMENT_CONFIRMED), not an enum, so new event types do
+// not require a schema migration; `metadata` carries event-specific detail
+// as JSON. Only the events a slice actually emits are written — V1 writes
+// PAYMENT_CONFIRMED, inside the same transaction as the payment itself.
+model AuditLog {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  actorUserId    String   @map("actor_user_id")
+  event          String
+  targetType     String   @map("target_type")
+  targetId       String   @map("target_id")
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  actor        User         @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([organizationId, targetType, targetId])
+  @@map("audit_logs")
 }

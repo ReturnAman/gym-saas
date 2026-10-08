@@ -13,8 +13,15 @@ import {
   type DuplicateMember,
 } from "@/lib/server/members";
 import {
+  PaymentAuthorizationError,
+  PaymentNotFoundError,
+  recordPayment,
+} from "@/lib/server/payments";
+import {
   MemberValidationError,
+  PaymentValidationError,
   type MemberField,
+  type PaymentField,
 } from "@/lib/members";
 
 export interface MemberFormState {
@@ -154,6 +161,66 @@ export async function updateMemberAction(
       message: "Could not save the member. Please try again.",
       errors: {},
       duplicates: [],
+    };
+  }
+
+  revalidatePath("/app/org/members");
+  revalidatePath(`/app/org/members/${memberId}`);
+  redirect(`/app/org/members/${memberId}`);
+}
+
+export interface PaymentFormState {
+  ok: boolean;
+  message: string | null;
+  errors: Partial<Record<PaymentField | "form", string>>;
+}
+
+export const INITIAL_PAYMENT_FORM_STATE: PaymentFormState = {
+  ok: false,
+  message: null,
+  errors: {},
+};
+
+/**
+ * Record-payment submit handler.
+ *
+ * Authentication is enforced by requireCurrentUser (redirects to sign-in);
+ * OWNER/ADMIN/STAFF authorization, tenant isolation, and input validation
+ * are enforced inside recordPayment, server-side. The member ID comes from
+ * a hidden field but is never trusted: recordPayment re-verifies it against
+ * the caller's organization. On success the payment and its audit event
+ * exist (atomically), and the user returns to the member's page, so a
+ * refresh cannot replay the recording.
+ */
+export async function recordPaymentAction(
+  _prevState: PaymentFormState,
+  formData: FormData,
+): Promise<PaymentFormState> {
+  const user = await requireCurrentUser();
+  const memberId = String(formData.get("memberId") ?? "");
+
+  try {
+    await recordPayment(user.id, memberId, {
+      amount: String(formData.get("amount") ?? ""),
+      paymentMethod: String(formData.get("paymentMethod") ?? ""),
+      reference: String(formData.get("reference") ?? ""),
+    });
+  } catch (error) {
+    if (error instanceof PaymentValidationError) {
+      return { ok: false, message: null, errors: error.errors };
+    }
+    if (
+      error instanceof PaymentAuthorizationError ||
+      error instanceof PaymentNotFoundError
+    ) {
+      return { ok: false, message: error.message, errors: {} };
+    }
+    // Unknown failures (e.g. database errors) get a generic message —
+    // never leak internals to the user.
+    return {
+      ok: false,
+      message: "Could not record the payment. Please try again.",
+      errors: {},
     };
   }
 

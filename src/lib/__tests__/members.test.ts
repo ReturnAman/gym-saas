@@ -4,6 +4,7 @@ import {
   MEMBERSHIP_EXPIRING_WITHIN_DAYS,
   PLAN_DURATIONS_MONTHS,
   MemberValidationError,
+  PaymentValidationError,
   addCalendarMonths,
   calculateExpiryDate,
   deriveMembershipPayments,
@@ -14,6 +15,7 @@ import {
   validateFee,
   validateMemberInput,
   validateName,
+  validatePaymentInput,
   validatePhoneNumber,
 } from "@/lib/members";
 
@@ -225,23 +227,136 @@ describe("derivePaymentStatus", () => {
   it("is PARTIALLY_PAID when some amount is paid", () => {
     expect(derivePaymentStatus(600_000, 200_000)).toBe("PARTIALLY_PAID");
   });
+
+  it("is OVERPAID when confirmed payments exceed the fee", () => {
+    expect(derivePaymentStatus(600_000, 600_001)).toBe("OVERPAID");
+    expect(derivePaymentStatus(0, 100)).toBe("OVERPAID");
+  });
 });
 
 describe("deriveMembershipPayments", () => {
-  it("reports paid ₹0 and outstanding = fee while no payment domain exists", () => {
-    // No payment records exist in this slice, so nothing has been paid —
-    // these are derived values, not a persisted payment balance.
-    expect(deriveMembershipPayments(600_000)).toEqual({
+  it("reports paid ₹0 and outstanding = fee when nothing has been paid", () => {
+    // Derived from the confirmed payment records, never a persisted
+    // payment balance.
+    expect(deriveMembershipPayments(600_000, 0)).toEqual({
       paidPaise: 0,
       outstandingPaise: 600_000,
     });
   });
 
+  it("derives outstanding from the sum of confirmed payments", () => {
+    // Multiple confirmed payments arrive pre-summed by the server layer.
+    expect(deriveMembershipPayments(600_000, 250_000 + 350_000)).toEqual({
+      paidPaise: 600_000,
+      outstandingPaise: 0,
+    });
+    expect(deriveMembershipPayments(600_000, 200_000)).toEqual({
+      paidPaise: 200_000,
+      outstandingPaise: 400_000,
+    });
+  });
+
+  it("reports an exact payment as fully settled", () => {
+    expect(deriveMembershipPayments(600_000, 600_000)).toEqual({
+      paidPaise: 600_000,
+      outstandingPaise: 0,
+    });
+    expect(derivePaymentStatus(600_000, 600_000)).toBe("PAID");
+  });
+
+  it("floors outstanding at zero on overpayment — paid stays the actual sum", () => {
+    // fee ₹10,000, paid ₹11,000 → paid ₹11,000, outstanding ₹0, OVERPAID.
+    // The excess is not lost and the payment is not rejected.
+    expect(deriveMembershipPayments(1_000_000, 1_100_000)).toEqual({
+      paidPaise: 1_100_000,
+      outstandingPaise: 0,
+    });
+    expect(derivePaymentStatus(1_000_000, 1_100_000)).toBe("OVERPAID");
+  });
+
+  it("handles multiple payments that together overpay the fee", () => {
+    // Two confirmed payments of ₹4,000 against a ₹6,000 fee arrive
+    // pre-summed by the server layer.
+    const paidPaise = 400_000 + 400_000;
+    expect(deriveMembershipPayments(600_000, paidPaise)).toEqual({
+      paidPaise: 800_000,
+      outstandingPaise: 0,
+    });
+    expect(derivePaymentStatus(600_000, paidPaise)).toBe("OVERPAID");
+  });
+
+  it("never reports a negative outstanding for any fee/paid pair", () => {
+    for (const [fee, paid] of [
+      [0, 1],
+      [0, 100_000],
+      [100, 101],
+      [600_000, 600_001],
+      [600_000, 10_000_000],
+    ] as const) {
+      expect(deriveMembershipPayments(fee, paid).outstandingPaise).toBe(0);
+    }
+  });
+
   it("reports a zero fee as fully paid", () => {
-    expect(deriveMembershipPayments(0)).toEqual({
+    expect(deriveMembershipPayments(0, 0)).toEqual({
       paidPaise: 0,
       outstandingPaise: 0,
     });
+  });
+});
+
+describe("validatePaymentInput", () => {
+  it("accepts a UPI payment without a reference", () => {
+    expect(
+      validatePaymentInput({ amount: "6000", paymentMethod: "UPI", reference: "" }),
+    ).toEqual({ amountPaise: 600_000, paymentMethod: "UPI", reference: null });
+  });
+
+  it("keeps an optional reference, trimmed", () => {
+    expect(
+      validatePaymentInput({
+        amount: "2500.50",
+        paymentMethod: "UPI",
+        reference: "  UTR123456  ",
+      }),
+    ).toEqual({
+      amountPaise: 250_050,
+      paymentMethod: "UPI",
+      reference: "UTR123456",
+    });
+  });
+
+  it("accepts every V1 payment method", () => {
+    for (const paymentMethod of ["UPI", "CASH", "CARD", "OTHER"]) {
+      expect(
+        validatePaymentInput({ amount: "100", paymentMethod, reference: "" })
+          .paymentMethod,
+      ).toBe(paymentMethod);
+    }
+  });
+
+  it("rejects a zero or malformed amount", () => {
+    for (const amount of ["0", "0.00", "-5", "abc", "10.999", ""]) {
+      expect(() =>
+        validatePaymentInput({ amount, paymentMethod: "CASH", reference: "" }),
+      ).toThrow(PaymentValidationError);
+    }
+  });
+
+  it("rejects an unknown payment method", () => {
+    expect(() =>
+      validatePaymentInput({ amount: "100", paymentMethod: "CHEQUE", reference: "" }),
+    ).toThrow(PaymentValidationError);
+  });
+
+  it("rejects an over-long reference", () => {
+    expect(() =>
+      validatePaymentInput({
+        amount: "100",
+        paymentMethod: "CASH",
+        reference: "x".repeat(121),
+      }),
+    ).toThrow(PaymentValidationError);
   });
 });
 

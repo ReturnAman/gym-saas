@@ -28,7 +28,12 @@ const MEMBERSHIP_STATUS_VALUES: MembershipStatus[] = [
   "EXPIRING",
   "EXPIRED",
 ];
-const PAYMENT_STATUS_VALUES: PaymentStatus[] = ["PAID", "PARTIALLY_PAID", "UNPAID"];
+const PAYMENT_STATUS_VALUES: PaymentStatus[] = [
+  "PAID",
+  "PARTIALLY_PAID",
+  "UNPAID",
+  "OVERPAID",
+];
 
 function toQuery(params: MembersSearchParams): string {
   const query = new URLSearchParams();
@@ -48,6 +53,8 @@ function membershipBadgeClass(status: MembershipStatus): string {
 
 function paymentBadgeClass(status: PaymentStatus): string {
   if (status === "PAID") return `${styles.badge} ${styles.badgePaid}`;
+  if (status === "PARTIALLY_PAID" || status === "OVERPAID")
+    return `${styles.badge} ${styles.badgeExpiring}`;
   return `${styles.badge} ${styles.badgeUnpaid}`;
 }
 

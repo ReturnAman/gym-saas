@@ -5,6 +5,7 @@ import { requireOrganizationContext } from "@/lib/server/authorization";
 import { getMemberDetail } from "@/lib/server/members";
 import {
   MEMBERSHIP_STATUS_LABELS,
+  PAYMENT_METHOD_LABELS,
   PAYMENT_STATUS_LABELS,
   formatDate,
   formatInr,
@@ -23,6 +24,8 @@ function membershipBadgeClass(status: MembershipStatus): string {
 
 function paymentBadgeClass(status: PaymentStatus): string {
   if (status === "PAID") return `${styles.badge} ${styles.badgePaid}`;
+  if (status === "PARTIALLY_PAID" || status === "OVERPAID")
+    return `${styles.badge} ${styles.badgeExpiring}`;
   return `${styles.badge} ${styles.badgeUnpaid}`;
 }
 
@@ -104,30 +107,77 @@ export default async function MemberDetailPage({
         <section className={styles.section} aria-label="Financial">
           <h2>Financial</h2>
           {membership ? (
-            <dl className={styles.details}>
-              <div className={styles.detailRow}>
-                <dt className={styles.term}>Total fee</dt>
-                <dd className={styles.value}>{formatInr(membership.feePaise)}</dd>
-              </div>
-              <div className={styles.detailRow}>
-                <dt className={styles.term}>Paid</dt>
-                <dd className={styles.value}>{formatInr(membership.paidPaise)}</dd>
-              </div>
-              <div className={styles.detailRow}>
-                <dt className={styles.term}>Outstanding</dt>
-                <dd className={styles.value}>
-                  {formatInr(membership.outstandingPaise)}
-                </dd>
-              </div>
-              <div className={styles.detailRow}>
-                <dt className={styles.term}>Payment status</dt>
-                <dd className={styles.value}>
-                  <span className={paymentBadgeClass(membership.paymentStatus)}>
-                    {PAYMENT_STATUS_LABELS[membership.paymentStatus]}
-                  </span>
-                </dd>
-              </div>
-            </dl>
+            <>
+              <dl className={styles.details}>
+                <div className={styles.detailRow}>
+                  <dt className={styles.term}>Total fee</dt>
+                  <dd className={styles.value}>{formatInr(membership.feePaise)}</dd>
+                </div>
+                <div className={styles.detailRow}>
+                  <dt className={styles.term}>Paid</dt>
+                  <dd className={styles.value}>{formatInr(membership.paidPaise)}</dd>
+                </div>
+                <div className={styles.detailRow}>
+                  <dt className={styles.term}>Outstanding</dt>
+                  <dd className={styles.value}>
+                    {formatInr(membership.outstandingPaise)}
+                  </dd>
+                </div>
+                <div className={styles.detailRow}>
+                  <dt className={styles.term}>Payment status</dt>
+                  <dd className={styles.value}>
+                    <span className={paymentBadgeClass(membership.paymentStatus)}>
+                      {PAYMENT_STATUS_LABELS[membership.paymentStatus]}
+                    </span>
+                  </dd>
+                </div>
+              </dl>
+
+              <h3>Payment history</h3>
+              {membership.payments.length === 0 ? (
+                <p className={styles.empty}>No payments recorded yet.</p>
+              ) : (
+                <div className={styles.tableWrap}>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th scope="col">Amount</th>
+                        <th scope="col">Method</th>
+                        <th scope="col">Reference</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">Confirmed by</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {membership.payments.map((payment) => (
+                        <tr key={payment.id}>
+                          <td>{formatInr(payment.amountPaise)}</td>
+                          <td>{PAYMENT_METHOD_LABELS[payment.paymentMethod]}</td>
+                          <td>
+                            {payment.reference ?? (
+                              <span className={styles.empty}>—</span>
+                            )}
+                          </td>
+                          <td>{formatDate(new Date(payment.confirmedAt))}</td>
+                          <td>{payment.confirmedByRole ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {detail.permissions.canRecordPayment && (
+                <div className={styles.detailActions}>
+                  <Link
+                    href={`/app/org/members/${detail.id}/payments/new`}
+                    className={styles.button}
+                  >
+                    Record payment
+                  </Link>
+                </div>
+              )}
+            </>
           ) : (
             <p className={styles.empty}>No financial records.</p>
           )}

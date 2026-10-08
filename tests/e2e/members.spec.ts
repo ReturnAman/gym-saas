@@ -32,3 +32,11 @@ test("edit member page redirects unauthenticated visitors to sign-in", async ({
   await page.goto("/app/org/members/some-member-id/edit");
   await expect(page).toHaveURL(/\/sign-in/);
 });
+
+test("record payment page redirects unauthenticated visitors to sign-in", async ({
+  page,
+}) => {
+  await page.goto("/app/org/members/some-member-id/payments/new");
+  await expect(page).toHaveURL(/\/sign-in/);
+  await expect(page.getByLabel("Amount received (₹)")).toHaveCount(0);
+});

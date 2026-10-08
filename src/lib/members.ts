@@ -23,9 +23,9 @@
 //   never floating point. The server layer converts paise to Prisma Decimal.
 // - Payment is a separate domain (04-DATABASE-DESIGN §16, §17): the
 //   finalized calculation is Outstanding = charge amount − SUM(confirmed
-//   payments). There is no payment domain yet, so paid is always ₹0 and
-//   outstanding is the full fee — both derived via deriveMembershipPayments,
-//   never a persisted payment balance.
+//   payments). Paid/outstanding are derived via deriveMembershipPayments
+//   from the confirmed payment records — never a persisted balance;
+//   Membership deliberately has no paid_amount column.
 
 /** Fixed V1 membership plans (product rule — not owner-configurable yet). */
 export const MEMBERSHIP_PLANS = [
@@ -69,7 +69,7 @@ const MAX_FEE_PAISE = 999_999_999_999;
 export const MEMBERSHIP_EXPIRING_WITHIN_DAYS = 7;
 
 export type MembershipStatus = "ACTIVE" | "EXPIRING" | "EXPIRED";
-export type PaymentStatus = "PAID" | "PARTIALLY_PAID" | "UNPAID";
+export type PaymentStatus = "PAID" | "PARTIALLY_PAID" | "UNPAID" | "OVERPAID";
 
 export const MEMBERSHIP_STATUS_LABELS: Record<MembershipStatus, string> = {
   ACTIVE: "Active",
@@ -81,7 +81,22 @@ export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   PAID: "Paid",
   PARTIALLY_PAID: "Partially paid",
   UNPAID: "Unpaid",
+  OVERPAID: "Overpaid",
 };
+
+/** Payment methods recorded for a confirmed payment (Payments V1). */
+export const PAYMENT_METHODS = ["UPI", "CASH", "CARD", "OTHER"] as const;
+
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  UPI: "UPI",
+  CASH: "Cash",
+  CARD: "Card",
+  OTHER: "Other",
+};
+
+export const MAX_PAYMENT_REFERENCE_LENGTH = 120;
 
 export type MemberField = "name" | "phoneNumber" | "fee" | "plan" | "startDate";
 
@@ -287,11 +302,16 @@ export function deriveMembershipStatus(
   return "ACTIVE";
 }
 
-/** Derive payment status from exact paise amounts. Outstanding = fee − paid. */
+/**
+ * Derive payment status from exact paise amounts.
+ * paid = 0 → UNPAID; 0 < paid < fee → PARTIALLY_PAID; paid = fee → PAID;
+ * paid > fee → OVERPAID. The paid total itself is never altered.
+ */
 export function derivePaymentStatus(
   feePaise: number,
   paidPaise: number,
 ): PaymentStatus {
+  if (paidPaise > feePaise) return "OVERPAID";
   const outstandingPaise = feePaise - paidPaise;
   if (outstandingPaise <= 0) return "PAID";
   if (paidPaise > 0) return "PARTIALLY_PAID";
@@ -299,22 +319,98 @@ export function derivePaymentStatus(
 }
 
 /**
- * Derive a membership's paid/outstanding amounts for the current slice.
+ * Derive a membership's paid/outstanding amounts.
  *
- * The payment domain does not exist yet (no charge/payment records), so
- * paid is always ₹0 and outstanding is the full fee. These are
- * UI/domain-derived values, not a persisted payment balance — Membership
- * deliberately has no paid_amount column. When payment claims and
- * confirmed payments land, paid becomes SUM(confirmed payments) against
- * the membership's charge (04-DATABASE-DESIGN §16); call sites keep their
- * shape and only the source of the paid amount changes.
+ * `paidPaise` is SUM(confirmed payments) against the membership, supplied by
+ * the server layer from the payment records, and is always reported exactly
+ * — including when it exceeds the fee. Outstanding is fee − paid, floored
+ * at zero: an overpayment makes outstanding ₹0 with status OVERPAID, never
+ * a negative balance. These are derived values, not a persisted payment
+ * balance — Membership deliberately has no paid_amount column
+ * (04-DATABASE-DESIGN §16).
  */
-export function deriveMembershipPayments(feePaise: number): {
+export function deriveMembershipPayments(
+  feePaise: number,
+  paidPaise: number,
+): {
   paidPaise: number;
   outstandingPaise: number;
 } {
-  const paidPaise = 0;
-  return { paidPaise, outstandingPaise: feePaise - paidPaise };
+  return { paidPaise, outstandingPaise: Math.max(0, feePaise - paidPaise) };
+}
+
+export type PaymentField = "amount" | "paymentMethod" | "reference";
+
+/** Thrown when payment input fails validation. Carries per-field messages. */
+export class PaymentValidationError extends Error {
+  errors: Partial<Record<PaymentField | "form", string>>;
+
+  constructor(errors: Partial<Record<PaymentField | "form", string>>) {
+    super("Payment validation failed.");
+    this.name = "PaymentValidationError";
+    this.errors = errors;
+  }
+}
+
+export interface PaymentInput {
+  /** Decimal string, e.g. "6000" or "6000.50". Must be greater than zero. */
+  amount: string;
+  paymentMethod: string;
+  /** Optional free-text reference; empty means none. */
+  reference: string;
+}
+
+export interface ValidatedPaymentInput {
+  /** Integer paise — exact, never floating point. Always > 0. */
+  amountPaise: number;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+}
+
+export function isPaymentMethod(value: string): value is PaymentMethod {
+  return (PAYMENT_METHODS as readonly string[]).includes(value);
+}
+
+/** Full record-payment input validation. Server-side authoritative. */
+export function validatePaymentInput(input: PaymentInput): ValidatedPaymentInput {
+  const errors: Partial<Record<PaymentField, string>> = {};
+
+  let amountPaise = 0;
+  const amount = input.amount.trim();
+  if (!FEE_REGEX.test(amount)) {
+    errors.amount = "Amount must be a valid amount, for example 6000 or 6000.50.";
+  } else {
+    const [rupeesPart, paisePart = ""] = amount.split(".");
+    amountPaise =
+      Number(rupeesPart) * 100 + Number(paisePart.padEnd(2, "0") || "0");
+    if (!Number.isSafeInteger(amountPaise) || amountPaise > MAX_FEE_PAISE) {
+      errors.amount = "Amount is too large.";
+    } else if (amountPaise <= 0) {
+      errors.amount = "Amount must be greater than zero.";
+    }
+  }
+
+  let paymentMethod: PaymentMethod | null = null;
+  if (isPaymentMethod(input.paymentMethod.trim())) {
+    paymentMethod = input.paymentMethod.trim() as PaymentMethod;
+  } else {
+    errors.paymentMethod = "Choose a payment method: UPI, Cash, Card, or Other.";
+  }
+
+  const referenceText = input.reference.trim();
+  if (referenceText.length > MAX_PAYMENT_REFERENCE_LENGTH) {
+    errors.reference = `Reference must be at most ${MAX_PAYMENT_REFERENCE_LENGTH} characters.`;
+  }
+
+  if (Object.keys(errors).length > 0 || !paymentMethod) {
+    throw new PaymentValidationError(errors);
+  }
+
+  return {
+    amountPaise,
+    paymentMethod,
+    reference: referenceText === "" ? null : referenceText,
+  };
 }
 
 /** Format integer paise as INR without floating-point arithmetic. */

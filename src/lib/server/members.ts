@@ -18,6 +18,12 @@ import {
 } from "../members";
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
+import {
+  canRecordPayment,
+  listPaymentsForMembership,
+  sumConfirmedPaymentsByMembership,
+  type PaymentHistoryItem,
+} from "./payments";
 
 /**
  * Server-side Member/Membership service (docs/04-DATABASE-DESIGN §9, §11,
@@ -82,6 +88,8 @@ export interface MemberPermissions {
   canView: boolean;
   canCreate: boolean;
   canEdit: boolean;
+  /** Record a confirmed payment (Payments V1): OWNER, ADMIN, STAFF. */
+  canRecordPayment: boolean;
 }
 
 export function getMemberPermissions(role: Role): MemberPermissions {
@@ -92,6 +100,7 @@ export function getMemberPermissions(role: Role): MemberPermissions {
     canView: staff || role === "TRAINER",
     canCreate: staff,
     canEdit: staff,
+    canRecordPayment: canRecordPayment(role),
   };
 }
 
@@ -156,9 +165,9 @@ export interface MemberListItem {
   paymentStatus: PaymentStatus | null;
   feePaise: number | null;
   /**
-   * Domain-derived, not a persisted balance: paid is always ₹0 in this
-   * slice (no payment domain yet) and outstanding is the full fee. See
-   * deriveMembershipPayments in src/lib/members.ts.
+   * Domain-derived, never a persisted balance: paid is SUM(confirmed
+   * payments) against the membership and outstanding is fee − paid
+   * (04-DATABASE-DESIGN §16; see deriveMembershipPayments).
    */
   paidPaise: number | null;
   outstandingPaise: number | null;
@@ -176,46 +185,73 @@ const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
 /**
- * Build the membership sub-filter for derived statuses. There is no payment
- * domain yet, so paid is always ₹0 in this slice: payment status is exactly
- * determined by the fee (fee = 0 → PAID, fee > 0 → UNPAID) and
- * PARTIALLY_PAID cannot occur. This must be generalized when payment
- * claims land.
+ * Build the membership sub-filter for the derived membership status.
+ * Payment status cannot be expressed as a membership column filter — it
+ * derives from SUM(confirmed payments) — so listMembers applies it after
+ * loading the payment sums (see below).
  */
 function membershipSubFilter(
   membershipStatus: MembershipStatus | undefined,
-  paymentStatus: PaymentStatus | undefined,
 ): Prisma.MembershipWhereInput | undefined {
-  const conditions: Prisma.MembershipWhereInput[] = [];
-
-  if (membershipStatus) {
-    const today = startOfUtcDay(new Date());
-    if (membershipStatus === "EXPIRED") {
-      conditions.push({ expiryDate: { lt: today } });
-    } else if (membershipStatus === "EXPIRING") {
-      const horizon = new Date(
-        today.getTime() + MEMBERSHIP_EXPIRING_WITHIN_DAYS * 86_400_000,
-      );
-      conditions.push({ expiryDate: { gte: today, lte: horizon } });
-    } else {
-      conditions.push({ expiryDate: { gte: today } });
-    }
+  if (!membershipStatus) return undefined;
+  const today = startOfUtcDay(new Date());
+  if (membershipStatus === "EXPIRED") {
+    return { expiryDate: { lt: today } };
   }
-
-  if (paymentStatus === "PAID") {
-    conditions.push({ fee: { lte: 0 } });
-  } else if (paymentStatus === "UNPAID") {
-    conditions.push({ fee: { gt: 0 } });
-  } else if (paymentStatus === "PARTIALLY_PAID") {
-    // No payment domain exists yet (paid is always ₹0), so no membership
-    // can be partially paid. Keep the filter value accepted by the UI but
-    // match nothing, rather than silently dropping the filter and showing
-    // unfiltered results. Generalize when payment claims land.
-    conditions.push({ id: { in: [] } });
+  if (membershipStatus === "EXPIRING") {
+    const horizon = new Date(
+      today.getTime() + MEMBERSHIP_EXPIRING_WITHIN_DAYS * 86_400_000,
+    );
+    return { expiryDate: { gte: today, lte: horizon } };
   }
+  return { expiryDate: { gte: today } };
+}
 
-  if (conditions.length === 0) return undefined;
-  return { AND: conditions };
+type MemberWithLatestMembership = Prisma.MemberGetPayload<{
+  include: { memberships: true };
+}>;
+
+/** Map a member row (+ payment sums) to its list item. */
+function toListItem(
+  member: MemberWithLatestMembership,
+  paidByMembershipId: Map<string, number>,
+): MemberListItem {
+  const latest = member.memberships[0];
+  if (!latest) {
+    return {
+      id: member.id,
+      name: member.name,
+      phoneNumber: member.phoneNumber,
+      plan: null,
+      planLabel: null,
+      startDate: null,
+      expiryDate: null,
+      membershipStatus: null,
+      paymentStatus: null,
+      feePaise: null,
+      paidPaise: null,
+      outstandingPaise: null,
+    };
+  }
+  const feePaise = decimalToPaise(latest.fee);
+  const { paidPaise, outstandingPaise } = deriveMembershipPayments(
+    feePaise,
+    paidByMembershipId.get(latest.id) ?? 0,
+  );
+  return {
+    id: member.id,
+    name: member.name,
+    phoneNumber: member.phoneNumber,
+    plan: latest.plan,
+    planLabel: PLAN_LABELS[latest.plan],
+    startDate: toDateString(latest.startDate),
+    expiryDate: toDateString(latest.expiryDate),
+    membershipStatus: deriveMembershipStatus(latest.expiryDate),
+    paymentStatus: derivePaymentStatus(feePaise, paidPaise),
+    feePaise,
+    paidPaise,
+    outstandingPaise,
+  };
 }
 
 export async function listMembers(
@@ -237,10 +273,7 @@ export async function listMembers(
   );
   const search = (filters.search ?? "").trim();
 
-  const membershipFilter = membershipSubFilter(
-    filters.membershipStatus,
-    filters.paymentStatus,
-  );
+  const membershipFilter = membershipSubFilter(filters.membershipStatus);
 
   const where: Prisma.MemberWhereInput = { organizationId: scope.organizationId };
   // MEMBER role: own record only (linked at OTP onboarding via userId).
@@ -257,6 +290,37 @@ export async function listMembers(
     where.memberships = { some: membershipFilter };
   }
 
+  const includeLatest = {
+    memberships: { orderBy: { createdAt: "desc" as const }, take: 1 },
+  };
+
+  // Payment status derives from SUM(confirmed payments), which no column
+  // filter can express: when it is requested, load the tenant-scoped
+  // candidates with their payment sums, derive each status, filter, and
+  // paginate the filtered result — totals stay exact.
+  if (filters.paymentStatus) {
+    const candidates = await db.member.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: includeLatest,
+    });
+    const sums = await sumConfirmedPaymentsByMembership(
+      scope.organizationId,
+      candidates.flatMap((m) => (m.memberships[0] ? [m.memberships[0].id] : [])),
+    );
+    const matching = candidates
+      .map((member) => toListItem(member, sums))
+      .filter((item) => item.paymentStatus === filters.paymentStatus);
+    const total = matching.length;
+    return {
+      items: matching.slice((page - 1) * pageSize, page * pageSize),
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    };
+  }
+
   const [total, members] = await Promise.all([
     db.member.count({ where }),
     db.member.findMany({
@@ -264,48 +328,17 @@ export async function listMembers(
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
-      include: {
-        memberships: { orderBy: { createdAt: "desc" }, take: 1 },
-      },
+      include: includeLatest,
     }),
   ]);
 
-  const items: MemberListItem[] = members.map((member) => {
-    const latest = member.memberships[0];
-    if (!latest) {
-      return {
-        id: member.id,
-        name: member.name,
-        phoneNumber: member.phoneNumber,
-        plan: null,
-        planLabel: null,
-        startDate: null,
-        expiryDate: null,
-        membershipStatus: null,
-        paymentStatus: null,
-        feePaise: null,
-        paidPaise: null,
-        outstandingPaise: null,
-      };
-    }
-    const feePaise = decimalToPaise(latest.fee);
-    // No payment domain yet — paid/outstanding are derived, never stored.
-    const { paidPaise, outstandingPaise } = deriveMembershipPayments(feePaise);
-    return {
-      id: member.id,
-      name: member.name,
-      phoneNumber: member.phoneNumber,
-      plan: latest.plan,
-      planLabel: PLAN_LABELS[latest.plan],
-      startDate: toDateString(latest.startDate),
-      expiryDate: toDateString(latest.expiryDate),
-      membershipStatus: deriveMembershipStatus(latest.expiryDate),
-      paymentStatus: derivePaymentStatus(feePaise, paidPaise),
-      feePaise,
-      paidPaise,
-      outstandingPaise,
-    };
-  });
+  const sums = await sumConfirmedPaymentsByMembership(
+    scope.organizationId,
+    members.flatMap((m) => (m.memberships[0] ? [m.memberships[0].id] : [])),
+  );
+  const items: MemberListItem[] = members.map((member) =>
+    toListItem(member, sums),
+  );
 
   return {
     items,
@@ -328,14 +361,16 @@ export interface MemberDetailMembership {
   expiryDate: string;
   feePaise: number;
   /**
-   * Domain-derived, not a persisted balance: paid is always ₹0 in this
-   * slice (no payment domain yet) and outstanding is the full fee. See
-   * deriveMembershipPayments in src/lib/members.ts.
+   * Domain-derived, never a persisted balance: paid is SUM(confirmed
+   * payments) against the membership and outstanding is fee − paid
+   * (04-DATABASE-DESIGN §16; see deriveMembershipPayments).
    */
   paidPaise: number;
   outstandingPaise: number;
   membershipStatus: MembershipStatus;
   paymentStatus: PaymentStatus;
+  /** Confirmed payment history, newest first. */
+  payments: PaymentHistoryItem[];
 }
 
 export interface MemberDetail {
@@ -377,8 +412,17 @@ export async function getMemberDetail(
   let membership: MemberDetailMembership | null = null;
   if (latest) {
     const feePaise = decimalToPaise(latest.fee);
-    // No payment domain yet — paid/outstanding are derived, never stored.
-    const { paidPaise, outstandingPaise } = deriveMembershipPayments(feePaise);
+    const sums = await sumConfirmedPaymentsByMembership(scope.organizationId, [
+      latest.id,
+    ]);
+    const { paidPaise, outstandingPaise } = deriveMembershipPayments(
+      feePaise,
+      sums.get(latest.id) ?? 0,
+    );
+    const payments = await listPaymentsForMembership(
+      scope.organizationId,
+      latest.id,
+    );
     membership = {
       id: latest.id,
       plan: latest.plan,
@@ -390,6 +434,7 @@ export async function getMemberDetail(
       outstandingPaise,
       membershipStatus: deriveMembershipStatus(latest.expiryDate),
       paymentStatus: derivePaymentStatus(feePaise, paidPaise),
+      payments,
     };
   }
 

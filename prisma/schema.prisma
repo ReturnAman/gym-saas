@@ -105,6 +105,10 @@ model User {
   confirmedPayments Payment[] @relation("ConfirmedPayments")
   auditEvents       AuditLog[]
 
+  // Attendance sessions this user checked in (staff manual check-in in
+  // V1; the member themselves once QR self-check-in arrives).
+  attendanceCheckIns AttendanceSession[] @relation("AttendanceCheckedInBy")
+
   // Gym-scoped member sessions (phone-OTP path only; never Clerk).
   memberSessions MemberSession[]
 
@@ -141,6 +145,7 @@ model Organization {
   members           Member[]
   memberMemberships Membership[]
   payments          Payment[]
+  attendanceSessions AttendanceSession[]
   auditLogs         AuditLog[]
   memberOtpChallenges MemberOtpChallenge[]
   memberSessions    MemberSession[]
@@ -203,6 +208,7 @@ model Member {
   user         User?        @relation("LinkedMembers", fields: [userId], references: [id], onDelete: SetNull)
   memberships  Membership[]
   payments     Payment[]
+  attendanceSessions AttendanceSession[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -334,6 +340,58 @@ model AuditLog {
   @@index([organizationId])
   @@index([organizationId, targetType, targetId])
   @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Attendance V1 — Slice 1 (staff manual check-in/check-out + history).
+// ---------------------------------------------------------------------------
+// An AttendanceSession is one gym visit: a member checks in, and later
+// checks out. Whether a session is open ("in the gym") is DERIVED from
+// checkOutAt being NULL — there is deliberately no status column, so the
+// timestamp and the state can never disagree.
+//
+// A member may have at most ONE open session per organization. That rule
+// is enforced in PostgreSQL by a partial unique index
+// (attendance_sessions_one_open_per_member, WHERE check_out_at IS NULL)
+// declared only in the migration — Prisma cannot express partial
+// indexes — so concurrent duplicate check-ins cannot both succeed even
+// if two requests race past the application-level pre-check.
+//
+// `source` records how the check-in happened: MANUAL for a staff-recorded
+// check-in (the only flow in Slice 1); QR is reserved for the later
+// member self-check-in slice and is never written yet.
+//
+// Tenant integrity mirrors Payment's: the composite foreign key
+// (organization_id, member_id) → members(organization_id, id) guarantees
+// a session can never reference a member of a different organization.
+enum AttendanceSource {
+  MANUAL
+  QR
+}
+
+model AttendanceSession {
+  id             String           @id @default(uuid())
+  organizationId String           @map("organization_id")
+  memberId       String           @map("member_id")
+  // The user whose action recorded the check-in: a staff user for MANUAL
+  // check-ins in V1. RESTRICT on delete mirrors Payment.confirmedBy — the
+  // attendance record must not lose its actor.
+  checkedInBy    String           @map("checked_in_by")
+  source         AttendanceSource @default(MANUAL)
+  checkInAt      DateTime         @map("check_in_at") @db.Timestamptz(6)
+  checkOutAt     DateTime?        @map("check_out_at") @db.Timestamptz(6)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  member          Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
+  checkedInByUser User         @relation("AttendanceCheckedInBy", fields: [checkedInBy], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, id])
+  @@index([organizationId])
+  @@index([organizationId, memberId])
+  @@index([organizationId, checkInAt])
+  @@map("attendance_sessions")
 }
 
 // ---------------------------------------------------------------------------

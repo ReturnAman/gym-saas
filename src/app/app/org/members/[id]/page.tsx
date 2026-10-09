@@ -1,7 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import {
+  ATTENDANCE_SOURCE_LABELS,
+  formatKolkataDate,
+  formatKolkataTime,
+} from "@/lib/attendance";
 import { requireOrganizationContext } from "@/lib/server/authorization";
+import {
+  getAttendancePermissions,
+  getOpenSession,
+  listMemberAttendance,
+} from "@/lib/server/attendance";
 import { getMemberDetail } from "@/lib/server/members";
 import {
   MEMBERSHIP_STATUS_LABELS,
@@ -14,6 +24,8 @@ import {
   type PaymentStatus,
 } from "@/lib/members";
 
+import { CheckInForm } from "../../attendance/check-in-form";
+import { CheckOutForm } from "../../attendance/check-out-form";
 import styles from "../members.module.css";
 
 function membershipBadgeClass(status: MembershipStatus): string {
@@ -37,16 +49,20 @@ function displayDate(isoDate: string): string {
 /**
  * Member details (protected).
  *
- * Four sections: Member, Membership, Financial, Attendance. Attendance is a
- * placeholder section only — attendance tracking is a later slice and is not
- * implemented here.
+ * Four sections: Member, Membership, Financial, Attendance. Attendance
+ * (Slice 1) shows the member's current open session or a staff check-in
+ * control, plus recent attendance history; times are rendered in
+ * Asia/Kolkata, the gym's local day. Check-in authorization,
+ * one-open-session enforcement, and the expired-membership confirmation
+ * all live server-side in the attendance service — this page only gates
+ * the controls on the caller's role (TRAINER: view-only).
  */
 export default async function MemberDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user } = await requireOrganizationContext();
+  const { user, membership: orgMembership } = await requireOrganizationContext();
   const { id } = await params;
   const detail = await getMemberDetail(user.id, id);
   if (!detail) {
@@ -54,6 +70,12 @@ export default async function MemberDetailPage({
   }
 
   const membership = detail.membership;
+  const attendancePermissions = getAttendancePermissions(orgMembership.role);
+  const [openSession, attendanceHistory] = await Promise.all([
+    getOpenSession(user.id, detail.id),
+    listMemberAttendance(user.id, detail.id),
+  ]);
+  const history = attendanceHistory ?? [];
 
   return (
     <main>
@@ -185,7 +207,59 @@ export default async function MemberDetailPage({
 
         <section className={styles.section} aria-label="Attendance">
           <h2>Attendance</h2>
-          <p className={styles.empty}>No attendance records yet.</p>
+          {openSession ? (
+            <div className={styles.detailActions}>
+              <p className={styles.value}>
+                In gym since {formatKolkataTime(new Date(openSession.checkInAt))}{" "}
+                ({formatKolkataDate(new Date(openSession.checkInAt))})
+              </p>
+              {attendancePermissions.canManage && (
+                <CheckOutForm
+                  sessionId={openSession.id}
+                  memberId={detail.id}
+                  from="member"
+                />
+              )}
+            </div>
+          ) : (
+            attendancePermissions.canManage && (
+              <CheckInForm memberId={detail.id} from="member" />
+            )
+          )}
+
+          <h3>Recent visits</h3>
+          {history.length === 0 ? (
+            <p className={styles.empty}>No attendance records yet.</p>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Check-in</th>
+                    <th scope="col">Check-out</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Recorded by</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((session) => (
+                    <tr key={session.id}>
+                      <td>{formatKolkataDate(new Date(session.checkInAt))}</td>
+                      <td>{formatKolkataTime(new Date(session.checkInAt))}</td>
+                      <td>
+                        {session.checkOutAt
+                          ? formatKolkataTime(new Date(session.checkOutAt))
+                          : "Still in gym"}
+                      </td>
+                      <td>{ATTENDANCE_SOURCE_LABELS[session.source]}</td>
+                      <td>{session.checkedInByRole ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
 

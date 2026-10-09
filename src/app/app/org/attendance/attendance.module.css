@@ -1,0 +1,208 @@
+/* Attendance screens.
+ *
+ * Same restrained language as the members screen: neutral-first surfaces,
+ * borders instead of shadows, one inherited font family, two weights
+ * (400/600), generous spacing. Status badges always pair a tint with a
+ * text label (never color alone).
+ */
+
+.pageHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.pageHeader h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+/* --- Today's sessions table --- */
+
+.tableWrap {
+  overflow-x: auto;
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.table th {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tbody tr:hover {
+  background: light-dark(#f7f7f7, #1f1f1f);
+}
+
+.rowLink {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --- Status badges: tint + text label, never color alone --- */
+
+.badge {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.badgeInGym {
+  color: light-dark(#1b5e20, #a5d6a7);
+  background: light-dark(#f1f8f1, #122b14);
+  border-color: light-dark(#a5d6a7, #2e7d32);
+}
+
+.badgeCheckedOut {
+  color: light-dark(#5f5f5f, #a3a3a3);
+  background: light-dark(#f5f5f5, #242424);
+  border-color: light-dark(#d4d4d4, #525252);
+}
+
+/* --- Buttons --- */
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#1a1a1a, #e8e8e8);
+  background: light-dark(#1a1a1a, #e8e8e8);
+  color: light-dark(#ffffff, #1a1a1a);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.button:hover:not(:disabled) {
+  background: light-dark(#333333, #d4d4d4);
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.secondaryButton {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.25rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  background: light-dark(#f0f0f0, #2a2a2a);
+}
+
+.secondaryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Compact variant for in-table / in-section row actions. */
+.smallButton {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.875rem;
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.smallButton:hover:not(:disabled) {
+  background: light-dark(#f0f0f0, #2a2a2a);
+}
+
+.smallButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* --- Inline check-in / check-out forms --- */
+
+.inlineForm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.formError {
+  border: 1px solid light-dark(#b3261e, #ff8a80);
+  background: light-dark(#fdf2f2, #2b1210);
+  color: light-dark(#b3261e, #ff8a80);
+  border-radius: 0.375rem;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+/* Expired-membership confirmation: warning tint + explicit decision. */
+.expiredWarning {
+  border: 1px solid light-dark(#e0c97a, #8a6d1f);
+  background: light-dark(#fdf6e3, #2b2110);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.expiredWarning p {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.empty {
+  color: light-dark(#8a8a8a, #737373);
+}
+
+.endOfDay {
+  margin-top: 1.5rem;
+}
+
+.hint {
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  margin: 0 0 0.75rem;
+}

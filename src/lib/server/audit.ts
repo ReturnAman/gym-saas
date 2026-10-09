@@ -15,6 +15,8 @@ import type { Prisma } from "@prisma/client";
 /** Audit event codes written by the application. */
 export const AUDIT_EVENT_PAYMENT_CONFIRMED = "PAYMENT_CONFIRMED";
 export const AUDIT_EVENT_MEMBER_LINKED = "MEMBER_LINKED";
+export const AUDIT_EVENT_ATTENDANCE_MANUALLY_ADDED = "ATTENDANCE_MANUALLY_ADDED";
+export const AUDIT_EVENT_ATTENDANCE_CHECKED_OUT = "ATTENDANCE_CHECKED_OUT";
 
 export interface AuditEventInput {
   organizationId: string;

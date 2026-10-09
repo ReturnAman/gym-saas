@@ -26,7 +26,10 @@ export default defineConfig({
     env: {
       NODE_ENV: "test",
       APP_URL: "http://localhost:3000",
-      DATABASE_URL: "postgresql://user:pass@localhost:5432/gymsaas",
+      DATABASE_URL:
+        process.env.RUN_DB_TESTS === "true" && process.env.DATABASE_URL
+          ? process.env.DATABASE_URL
+          : "postgresql://user:pass@localhost:5432/gymsaas",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_vitest",
       CLERK_SECRET_KEY: "sk_test_vitest",
     },

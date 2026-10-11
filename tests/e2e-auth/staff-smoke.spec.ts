@@ -22,9 +22,12 @@ test("owner sees their gym, the primary-gym note, and their own staff row", asyn
     ),
   ).toBeVisible();
 
-  const staffTable = page.locator("table");
-  await expect(staffTable.getByText("(You)")).toBeVisible();
-  await expect(staffTable.getByText("Owner", { exact: true })).toBeVisible();
+  // The staff list is a <ul> of rows inside the "Staff list" section
+  // (there is no table in the rendered page — an earlier version of
+  // this spec scoped its locators to a table that never existed).
+  const staffList = page.locator("section[aria-label=\"Staff list\"]");
+  await expect(staffList.getByText("(You)")).toBeVisible();
+  await expect(staffList.getByText("Owner", { exact: true })).toBeVisible();
   // A fresh fixture gym has exactly one staff row: the owner.
-  await expect(page.locator("tbody tr")).toHaveCount(1);
+  await expect(staffList.locator("li")).toHaveCount(1);
 });

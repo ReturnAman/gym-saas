@@ -10,6 +10,7 @@ const {
   mockAuditLogCreate,
   mockMembershipUpdate,
   mockPaymentGroupBy,
+  mockTxQueryRaw,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -19,6 +20,7 @@ const {
   mockAuditLogCreate: vi.fn(),
   mockMembershipUpdate: vi.fn(),
   mockPaymentGroupBy: vi.fn(),
+  mockTxQueryRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -60,6 +62,10 @@ function mockRoleScope(role: string) {
     organizationId: ORG_ID,
     role,
   });
+  // The in-transaction revalidation sees the same membership by
+  // default; denial tests override this to simulate a mid-request
+  // demotion/removal.
+  mockTxQueryRaw.mockResolvedValue([{ organizationId: ORG_ID, role }]);
 }
 
 function mockMemberAndMembership() {
@@ -69,6 +75,7 @@ function mockMemberAndMembership() {
   mockAuditLogCreate.mockResolvedValue({ id: "audit-id" });
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
+      $queryRaw: mockTxQueryRaw,
       payment: { create: mockPaymentCreate },
       auditLog: { create: mockAuditLogCreate },
       membership: { update: mockMembershipUpdate },
@@ -93,6 +100,45 @@ describe("canRecordPayment", () => {
 });
 
 describe("recordPayment", () => {
+  it("denies inside the transaction when the recorder's membership is gone", async () => {
+    mockRoleScope("STAFF");
+    mockMemberAndMembership();
+    // Scope resolved as STAFF moments ago; the locked in-transaction
+    // revalidation finds no membership row (mid-request removal).
+    mockTxQueryRaw.mockResolvedValue([]);
+    await expect(
+      recordPayment(USER_ID, MEMBER_ID, VALID_PAYMENT),
+    ).rejects.toBeInstanceOf(PaymentAuthorizationError);
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+    expect(mockAuditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("denies inside the transaction when the recorder was demoted mid-request", async () => {
+    mockRoleScope("STAFF");
+    mockMemberAndMembership();
+    mockTxQueryRaw.mockResolvedValue([
+      { organizationId: ORG_ID, role: "TRAINER" },
+    ]);
+    await expect(
+      recordPayment(USER_ID, MEMBER_ID, VALID_PAYMENT),
+    ).rejects.toBeInstanceOf(PaymentAuthorizationError);
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+    expect(mockAuditLogCreate).not.toHaveBeenCalled();
+  });
+
+  it("denies inside the transaction when the recorder's primary gym changed", async () => {
+    mockRoleScope("OWNER");
+    mockMemberAndMembership();
+    mockTxQueryRaw.mockResolvedValue([
+      { organizationId: "99999999-9999-4999-8999-999999999999", role: "OWNER" },
+    ]);
+    await expect(
+      recordPayment(USER_ID, MEMBER_ID, VALID_PAYMENT),
+    ).rejects.toBeInstanceOf(PaymentAuthorizationError);
+    expect(mockPaymentCreate).not.toHaveBeenCalled();
+    expect(mockAuditLogCreate).not.toHaveBeenCalled();
+  });
+
   it.each(["OWNER", "ADMIN", "STAFF"])(
     "records a payment for role %s with its audit event in one transaction",
     async (role) => {

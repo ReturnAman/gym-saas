@@ -79,6 +79,49 @@ async function resolveScope(userId: string): Promise<PaymentScope> {
   };
 }
 
+interface LockedRecorderMembership {
+  organizationId: string;
+  role: Role;
+}
+
+/**
+ * Re-derive the recorder's authority inside the recording transaction,
+ * under a lock on their own membership row (the staff.ts
+ * revalidateActorInTransaction pattern, as in payment-claims.ts).
+ * resolveScope's earlier check is only a fast path: between it and
+ * this transaction the actor may have been demoted or removed, and a
+ * revoked actor must not create a confirmed payment. The lock also
+ * serializes against the revocation itself — deleting the membership
+ * needs this row — so the two linearize instead of racing.
+ *
+ * The row selected is exactly resolveScope's: the actor's earliest
+ * organization membership (getPrimaryMembership's ordering).
+ */
+async function revalidateRecorderInTransaction(
+  tx: Prisma.TransactionClient,
+  scope: PaymentScope,
+): Promise<void> {
+  const rows = await tx.$queryRaw<LockedRecorderMembership[]>`
+    SELECT organization_id AS "organizationId", role
+    FROM organization_memberships
+    WHERE user_id = ${scope.userId}
+    ORDER BY created_at ASC
+    LIMIT 1
+    FOR UPDATE
+  `;
+  const current = rows[0];
+  if (!current || current.organizationId !== scope.organizationId) {
+    throw new PaymentAuthorizationError(
+      "Your access changed while you were working. Refresh and try again.",
+    );
+  }
+  if (!canRecordPayment(current.role)) {
+    throw new PaymentAuthorizationError(
+      "You do not have permission to record payments.",
+    );
+  }
+}
+
 /** Prisma.Decimal → integer paise (exact; Decimal mul is not floating point). */
 function decimalToPaise(value: Prisma.Decimal): number {
   return value.mul(100).toNumber();
@@ -195,6 +238,9 @@ export async function recordPayment(
   }
 
   const paymentId = await db.$transaction(async (tx) => {
+    // Revalidate the recorder under lock before any write: a
+    // demoted/removed actor must not record, even mid-request.
+    await revalidateRecorderInTransaction(tx, scope);
     const payment = await tx.payment.create({
       data: {
         organizationId: scope.organizationId,

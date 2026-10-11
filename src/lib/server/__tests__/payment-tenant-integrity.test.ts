@@ -6,6 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/server/db";
+import {
+  PaymentAuthorizationError,
+  recordPayment,
+} from "@/lib/server/payments";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -87,6 +91,7 @@ describe("payment tenant integrity", () => {
     () => {
       const suffix = crypto.randomUUID();
       const createdOrgIds: string[] = [];
+      const createdRecorderIds: string[] = [];
       let actorId = "";
 
       beforeAll(async () => {
@@ -107,8 +112,29 @@ describe("payment tenant integrity", () => {
         if (actorId) {
           await db.user.deleteMany({ where: { id: actorId } });
         }
+        if (createdRecorderIds.length > 0) {
+          await db.user.deleteMany({
+            where: { id: { in: createdRecorderIds } },
+          });
+        }
         await db.$disconnect();
       });
+
+      async function seedRecorder(
+        orgId: string,
+        tag: string,
+        role: "OWNER" | "STAFF" = "STAFF",
+      ) {
+        const recorder = await db.user.create({
+          data: { clerkUserId: `recorder-${tag}-${suffix}` },
+          select: { id: true },
+        });
+        createdRecorderIds.push(recorder.id);
+        await db.organizationMembership.create({
+          data: { userId: recorder.id, organizationId: orgId, role },
+        });
+        return recorder;
+      }
 
       async function seedOrg(name: string) {
         const org = await db.organization.create({
@@ -189,6 +215,128 @@ describe("payment tenant integrity", () => {
           );
         expect(error).toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
         expect((error as { code?: string }).code).toBe("P2003");
+      });
+
+      const recordInput = {
+        amount: "500",
+        paymentMethod: "UPI",
+        reference: "",
+      };
+
+      it("denies recording after the recorder was demoted", async () => {
+        const { org, member, membership } = await seedOrg(`Recorder Org D ${suffix}`);
+        const recorder = await seedRecorder(org.id, "demoted");
+        await db.organizationMembership.updateMany({
+          where: { userId: recorder.id, organizationId: org.id },
+          data: { role: "MEMBER" },
+        });
+        await expect(
+          recordPayment(recorder.id, member.id, recordInput),
+        ).rejects.toBeInstanceOf(PaymentAuthorizationError);
+        expect(
+          await db.payment.count({ where: { membershipId: membership.id } }),
+        ).toBe(0);
+      });
+
+      it("denies recording after the recorder's membership was removed", async () => {
+        const { org, member, membership } = await seedOrg(`Recorder Org R ${suffix}`);
+        const recorder = await seedRecorder(org.id, "removed");
+        await db.organizationMembership.deleteMany({
+          where: { userId: recorder.id, organizationId: org.id },
+        });
+        await expect(
+          recordPayment(recorder.id, member.id, recordInput),
+        ).rejects.toBeInstanceOf(PaymentAuthorizationError);
+        expect(
+          await db.payment.count({ where: { membershipId: membership.id } }),
+        ).toBe(0);
+      });
+
+      it("cannot record when the recorder is removed mid-request (revocation race)", async () => {
+        const { org, member, membership } = await seedOrg(`Recorder Org X ${suffix}`);
+        const recorder = await seedRecorder(org.id, "race");
+
+        // Hold the recorder's membership row under an external lock.
+        // recordPayment's pre-transaction checks still pass (the
+        // membership exists and is STAFF at that moment) — the TOCTOU
+        // window — but its in-transaction revalidation must block on
+        // this lock, then find the row deleted and deny.
+        let releaseGate!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          releaseGate = resolve;
+        });
+        let markLocked!: () => void;
+        const locked = new Promise<void>((resolve) => {
+          markLocked = resolve;
+        });
+        const holdingTx = db.$transaction(
+          async (tx) => {
+            await tx.$queryRaw`
+              SELECT id FROM organization_memberships
+              WHERE user_id = ${recorder.id}
+              ORDER BY created_at ASC
+              LIMIT 1
+              FOR UPDATE
+            `;
+            markLocked();
+            await gate;
+            await tx.organizationMembership.deleteMany({
+              where: { userId: recorder.id },
+            });
+          },
+          { timeout: 30_000 },
+        );
+
+        let recordSettled = false;
+        let recordError: unknown = null;
+        const recordRun = (async () => {
+          try {
+            await recordPayment(recorder.id, member.id, recordInput);
+          } catch (error) {
+            recordError = error;
+          } finally {
+            recordSettled = true;
+          }
+        })();
+
+        let windowError: unknown = null;
+        try {
+          await locked;
+          // The request demonstrably started while the membership
+          // still existed (the holding transaction has not deleted
+          // anything yet), so a late start cannot explain a denial.
+          const stillThere = await db.organizationMembership.findFirst({
+            where: { userId: recorder.id },
+            select: { id: true },
+          });
+          expect(stillThere).not.toBeNull();
+          // While the row is held, recording must NOT settle: its
+          // first transactional step is the revalidation lock. (On
+          // the pre-fix code it committed within milliseconds.)
+          const deadline = Date.now() + 1_500;
+          while (Date.now() < deadline) {
+            expect(recordSettled).toBe(false);
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+        } catch (error) {
+          // Captured, not thrown yet: the gate must be released and
+          // both outstanding promises drained below even when the
+          // observation window itself fails.
+          windowError = error;
+        } finally {
+          releaseGate();
+        }
+        const [holdOutcome] = await Promise.allSettled([
+          holdingTx,
+          recordRun,
+        ]);
+        if (holdOutcome.status === "rejected") throw holdOutcome.reason;
+        if (windowError) throw windowError;
+
+        expect(recordError).toBeInstanceOf(PaymentAuthorizationError);
+        expect(
+          await db.payment.count({ where: { membershipId: membership.id } }),
+        ).toBe(0);
       });
     },
   );

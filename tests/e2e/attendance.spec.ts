@@ -11,3 +11,11 @@ test("gym attendance page redirects unauthenticated visitors to sign-in", async 
   await expect(page).toHaveURL(/\/sign-in/);
   await expect(page.getByText("No check-ins yet today.")).toHaveCount(0);
 });
+
+test("gym QR page redirects unauthenticated visitors to sign-in", async ({
+  page,
+}) => {
+  await page.goto("/app/org/attendance/qr");
+  await expect(page).toHaveURL(/\/sign-in/);
+  await expect(page.getByText("Scan to check in")).toHaveCount(0);
+});

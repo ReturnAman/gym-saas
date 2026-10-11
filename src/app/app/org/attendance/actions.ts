@@ -64,9 +64,9 @@ function displayDate(isoDate: string): string {
  * Check-in submit handler.
  *
  * Authentication is enforced by requireCurrentUser (redirects to
- * sign-in); OWNER/ADMIN/STAFF authorization, tenant isolation, the
- * one-open-session rule, and the membership-status check are enforced
- * inside checkInMember, server-side. The member ID comes from a hidden
+ * sign-in); check-in authorization (OWNER/ADMIN/STAFF/TRAINER), tenant
+ * isolation, the one-open-session rule, and the membership-status
+ * check are enforced inside checkInMember, server-side. The member ID comes from a hidden
  * field but is never trusted: the service re-verifies it against the
  * caller's organization, and re-derives the membership status from the
  * database — never from anything the client sent.

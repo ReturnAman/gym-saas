@@ -1,3 +1,7 @@
+import Link from "next/link";
+
+import { formatKolkataDateTime } from "@/lib/attendance";
+import { getOwnOpenSession } from "@/lib/server/attendance";
 import { getMemberContext } from "@/lib/server/member-session";
 
 /**
@@ -18,11 +22,16 @@ export default async function MemberPage() {
       <main>
         <h1>Member sign-in</h1>
         <p>No active member session.</p>
+        <p>Scan your gym&apos;s QR code to sign in and check in.</p>
+        <p>
+          <Link href="/member/scan">Scan gym QR</Link>
+        </p>
       </main>
     );
   }
 
   const { organization, member, membership, session } = context;
+  const openSession = await getOwnOpenSession(context);
 
   return (
     <main>
@@ -38,6 +47,19 @@ export default async function MemberPage() {
         <dt>Session expires</dt>
         <dd>{session.expiresAt.toISOString()}</dd>
       </dl>
+      <h2>Attendance</h2>
+      {openSession && (
+        <p>
+          You&apos;re in the gym — checked in at{" "}
+          {formatKolkataDateTime(openSession.checkInAt)}.
+        </p>
+      )}
+      <p>
+        <Link href="/member/attendance">View your attendance</Link>
+      </p>
+      <p>
+        <Link href="/member/scan">Scan gym QR</Link>
+      </p>
     </main>
   );
 }

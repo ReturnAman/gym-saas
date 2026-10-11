@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  attendanceSourceLabel,
+  buildMemberCheckInUrl,
   formatKolkataDate,
+  formatKolkataDateTime,
   formatKolkataTime,
   getKolkataDayBoundsUtc,
 } from "@/lib/attendance";
@@ -81,5 +84,60 @@ describe("Kolkata formatters", () => {
     expect(formatKolkataTime(new Date("2026-10-10T18:30:00.000Z"))).toMatch(
       /12:00\s?[Aa][Mm]/,
     );
+  });
+});
+
+describe("member-facing Kolkata formatters (ISO string inputs)", () => {
+  it("formats the IST date and time across the UTC→IST day boundary", () => {
+    // 2026-10-09T19:00Z is already 2026-10-10 00:30 IST — the Kolkata
+    // calendar date is Oct 10, not the UTC date Oct 9.
+    expect(formatKolkataDate("2026-10-09T19:00:00.000Z")).toBe("10 Oct 2026");
+    expect(formatKolkataTime("2026-10-09T19:00:00.000Z")).toBe("12:30 am");
+    expect(formatKolkataDateTime("2026-10-09T19:00:00.000Z")).toBe(
+      "10 Oct 2026, 12:30 am",
+    );
+  });
+
+  it("formats a mid-day instant", () => {
+    // 2026-10-10T05:00Z is 10:30 IST on Oct 10.
+    expect(formatKolkataDate("2026-10-10T05:00:00.000Z")).toBe("10 Oct 2026");
+    expect(formatKolkataTime("2026-10-10T05:00:00.000Z")).toBe("10:30 am");
+    expect(formatKolkataDateTime("2026-10-10T05:00:00.000Z")).toBe(
+      "10 Oct 2026, 10:30 am",
+    );
+  });
+
+  it("labels attendance sources for member display", () => {
+    expect(attendanceSourceLabel("MANUAL")).toBe("Manual");
+    expect(attendanceSourceLabel("QR")).toBe("QR");
+  });
+});
+
+describe("buildMemberCheckInUrl", () => {
+  const ORG_ID = "c3298d3b-a07f-33eb-de2b-00333455cf3f";
+
+  it("builds the canonical check-in URL from a bare app URL", () => {
+    expect(buildMemberCheckInUrl("https://gym.example.com", ORG_ID)).toBe(
+      `https://gym.example.com/member/check-in?gym=${ORG_ID}`,
+    );
+  });
+
+  it("strips a single trailing slash from the app URL", () => {
+    expect(buildMemberCheckInUrl("https://gym.example.com/", ORG_ID)).toBe(
+      `https://gym.example.com/member/check-in?gym=${ORG_ID}`,
+    );
+  });
+
+  it("strips multiple trailing slashes from the app URL", () => {
+    expect(buildMemberCheckInUrl("https://gym.example.com///", ORG_ID)).toBe(
+      `https://gym.example.com/member/check-in?gym=${ORG_ID}`,
+    );
+  });
+
+  it("produces a parseable URL with the gym as the only query parameter", () => {
+    const url = new URL(buildMemberCheckInUrl("http://localhost:3000/", ORG_ID));
+    expect(url.pathname).toBe("/member/check-in");
+    expect(url.searchParams.get("gym")).toBe(ORG_ID);
+    expect([...url.searchParams.keys()]).toEqual(["gym"]);
   });
 });

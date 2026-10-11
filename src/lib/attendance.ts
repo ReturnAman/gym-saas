@@ -126,12 +126,61 @@ const kolkataDateFormatter = new Intl.DateTimeFormat("en-IN", {
   year: "numeric",
 });
 
-/** Format an instant's wall-clock time in Asia/Kolkata, e.g. "6:30 PM". */
-export function formatKolkataTime(date: Date): string {
-  return kolkataTimeFormatter.format(date);
+const kolkataLongDateFormatter = new Intl.DateTimeFormat("en-IN", {
+  timeZone: ATTENDANCE_TIME_ZONE,
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+/**
+ * Format an instant's wall-clock time in Asia/Kolkata, e.g. "6:30 pm".
+ * Accepts a Date (server-side values) or an ISO string (API DTOs) — the
+ * output is the same either way.
+ */
+export function formatKolkataTime(input: Date | string): string {
+  return kolkataTimeFormatter.format(
+    typeof input === "string" ? new Date(input) : input,
+  );
 }
 
-/** Format an instant's calendar date in Asia/Kolkata as DD/MM/YYYY. */
-export function formatKolkataDate(date: Date): string {
-  return kolkataDateFormatter.format(date);
+/**
+ * Format an instant's calendar date in Asia/Kolkata.
+ *
+ * Two call conventions exist in the codebase and keep their established
+ * shapes: Date inputs (staff pages) format as DD/MM/YYYY, while ISO
+ * string inputs (member-facing DTO timestamps) format in the long form,
+ * e.g. "10 Oct 2026".
+ */
+export function formatKolkataDate(iso: string): string;
+export function formatKolkataDate(date: Date): string;
+export function formatKolkataDate(input: Date | string): string {
+  return typeof input === "string"
+    ? kolkataLongDateFormatter.format(new Date(input))
+    : kolkataDateFormatter.format(input);
+}
+
+/** Format an ISO instant as "10 Oct 2026, 12:30 am" in Asia/Kolkata. */
+export function formatKolkataDateTime(iso: string): string {
+  return `${formatKolkataDate(iso)}, ${formatKolkataTime(iso)}`;
+}
+
+/** Display label for how a check-in was recorded, e.g. "Manual" / "QR". */
+export function attendanceSourceLabel(source: AttendanceSourceValue): string {
+  return ATTENDANCE_SOURCE_LABELS[source];
+}
+
+/**
+ * Canonical member check-in URL for a gym — the target encoded in the
+ * gym's printed QR poster (ADR 022). The organization ID is the only
+ * variable part; it identifies the gym and grants no access by itself.
+ * Trailing slashes on the configured app URL are stripped so the result
+ * never contains a double slash before the path.
+ */
+export function buildMemberCheckInUrl(
+  appUrl: string,
+  organizationId: string,
+): string {
+  const base = appUrl.replace(/\/+$/, "");
+  return `${base}/member/check-in?gym=${encodeURIComponent(organizationId)}`;
 }

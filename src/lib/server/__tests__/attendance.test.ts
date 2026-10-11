@@ -58,6 +58,7 @@ import {
   AttendanceConfirmationRequiredError,
   AttendanceNoMembershipError,
   AttendanceNotFoundError,
+  canCheckInAttendance,
   canManageAttendance,
   canViewAttendance,
   checkInMember,
@@ -130,25 +131,30 @@ describe("attendance permissions", () => {
   it("allows OWNER, ADMIN and STAFF to manage attendance", () => {
     for (const role of ["OWNER", "ADMIN", "STAFF"] as const) {
       expect(canManageAttendance(role)).toBe(true);
+      expect(canCheckInAttendance(role)).toBe(true);
       expect(getAttendancePermissions(role)).toEqual({
         canView: true,
         canManage: true,
+        canCheckIn: true,
       });
     }
   });
 
-  it("allows TRAINER to view but not manage", () => {
+  it("allows TRAINER to view and check in, but not manage", () => {
     expect(canViewAttendance("TRAINER")).toBe(true);
     expect(canManageAttendance("TRAINER")).toBe(false);
+    expect(canCheckInAttendance("TRAINER")).toBe(true);
     expect(getAttendancePermissions("TRAINER")).toEqual({
       canView: true,
       canManage: false,
+      canCheckIn: true,
     });
   });
 
   it("allows MEMBER neither to view nor manage", () => {
     expect(canViewAttendance("MEMBER")).toBe(false);
     expect(canManageAttendance("MEMBER")).toBe(false);
+    expect(canCheckInAttendance("MEMBER")).toBe(false);
   });
 });
 
@@ -194,7 +200,10 @@ describe("checkInMember", () => {
     },
   );
 
-  it.each(["TRAINER", "MEMBER"])(
+  // TRAINER is intentionally absent here: since the Slice 2 QR
+  // revision a trainer MAY check a member in (see
+  // attendance-trainer.test.ts). MEMBER remains refused.
+  it.each(["MEMBER"])(
     "refuses role %s without touching the database",
     async (role) => {
       mockRoleScope(role);

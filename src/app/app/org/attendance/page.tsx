@@ -34,6 +34,9 @@ export default async function AttendancePage() {
     <main>
       <div className={styles.pageHeader}>
         <h1>Attendance — today</h1>
+        <Link href="/app/org/attendance/qr" className={styles.secondaryButton}>
+          Gym QR code
+        </Link>
       </div>
       <p className={styles.hint}>
         {formatKolkataDate(now)} · {sessions.length}{" "}

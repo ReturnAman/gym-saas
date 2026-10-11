@@ -15,6 +15,7 @@ import {
 } from "./audit";
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
+import type { MemberSessionContext } from "./member-session";
 
 /**
  * Server-side Attendance service (Attendance V1 — Slice 1: staff manual
@@ -36,15 +37,30 @@ import { db } from "./db";
  * case, and a raced duplicate surfaces as P2002 and is translated to the
  * same error.
  *
- * Permission model (matrix §8, as approved for this slice):
- * - Check in / check out: OWNER, ADMIN, STAFF.
- * - View attendance: OWNER, ADMIN, STAFF, TRAINER (view-only).
+ * Permission model (matrix §8, as approved for this slice; check-in
+ * widened by the Slice 2 QR revision, ADR 022):
+ * - Check in: OWNER, ADMIN, STAFF, TRAINER — a trainer may record a
+ *   manual check-in on a member's behalf (e.g. a member without a
+ *   phone), through the same validation, expired-membership
+ *   confirmation, audit event, and duplicate protection as staff; the
+ *   acting trainer is the recorded actor.
+ * - Check out / end-of-day: OWNER, ADMIN, STAFF (unchanged).
+ * - View attendance: OWNER, ADMIN, STAFF, TRAINER.
  *
  * Check-in against an EXPIRED membership is never silent in either
  * direction: without an explicit staff confirmation it fails with
  * AttendanceConfirmationRequiredError; the confirmation flow re-derives
  * the status server-side on every submission. A member with NO
  * membership on record cannot be checked in at all (no override).
+ *
+ * Slice 2 (S1) adds the member self-service path on top of the same
+ * check-in core: checkInSelf resolves everything from the verified
+ * MemberSessionContext (ADR 021) — never from client input — records
+ * source QR, writes NO audit event (ADR 017 §45: attendance rows are
+ * the history; only staff manual adds are audited), and BLOCKS an
+ * EXPIRED membership outright (AttendanceMembershipExpiredError): a
+ * member cannot confirm their own expired check-in; the staff
+ * confirmation flow remains the only override.
  */
 
 /** Thrown when the caller lacks permission or the tenant scope fails. */
@@ -94,14 +110,39 @@ export class AttendanceConfirmationRequiredError extends Error {
   }
 }
 
+/**
+ * Thrown when a member tries to check THEMSELVES in against an EXPIRED
+ * membership. Unlike the staff path there is no confirmation override:
+ * self-check-in is blocked outright and the member is directed to the
+ * front desk, where staff can still check them in via the confirmation
+ * flow.
+ */
+export class AttendanceMembershipExpiredError extends Error {
+  constructor() {
+    super("This membership has expired.");
+    this.name = "AttendanceMembershipExpiredError";
+  }
+}
+
 export interface AttendancePermissions {
   canView: boolean;
   canManage: boolean;
+  canCheckIn: boolean;
 }
 
 /** Roles allowed to record attendance (check in/out) in V1. */
 export function canManageAttendance(role: Role): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "STAFF";
+}
+
+/**
+ * Roles allowed to record a manual check-in on a member's behalf: the
+ * managing roles plus TRAINER (Slice 2 QR revision, ADR 022). This is
+ * deliberately narrower than a general write permission — check-out
+ * and end-of-day remain governed by canManageAttendance.
+ */
+export function canCheckInAttendance(role: Role): boolean {
+  return canManageAttendance(role) || role === "TRAINER";
 }
 
 /** Roles allowed to view attendance: staff roles plus TRAINER (view-only). */
@@ -112,7 +153,11 @@ export function canViewAttendance(role: Role): boolean {
 export function getAttendancePermissions(
   role: Role,
 ): AttendancePermissions {
-  return { canView: canViewAttendance(role), canManage: canManageAttendance(role) };
+  return {
+    canView: canViewAttendance(role),
+    canManage: canManageAttendance(role),
+    canCheckIn: canCheckInAttendance(role),
+  };
 }
 
 interface AttendanceScope {
@@ -222,6 +267,125 @@ function toSessionItem(
 // ---------------------------------------------------------------------------
 
 /**
+ * The shared check-in core. Everything it needs is resolved server-side
+ * by the caller (staff scope from the caller's own organization
+ * membership, or the verified member-session context) — it never
+ * accepts an organization or member identifier from client input.
+ *
+ * Steps, in order:
+ * - friendly open-session pre-check (the partial unique index is the
+ *   real guarantee; a raced P2002 from the insert is translated to the
+ *   same AttendanceAlreadyCheckedInError);
+ * - latest membership lookup (tenant-scoped, newest first); no
+ *   membership → AttendanceNoMembershipError (no override exists);
+ * - membership status derived from that record on every call; EXPIRED
+ *   handling depends on the caller's policy:
+ *   - "confirm" (staff): without explicit confirmation →
+ *     AttendanceConfirmationRequiredError, nothing is written; with
+ *     confirmation the check-in proceeds;
+ *   - "block" (member self-check-in): AttendanceMembershipExpiredError
+ *     regardless of any flag — there is no self-confirmation;
+ * - the session (and, for the staff path only, the
+ *   ATTENDANCE_MANUALLY_ADDED audit event) is written in one
+ *   transaction.
+ */
+async function createCheckInSession(
+  scope: {
+    organizationId: string;
+    memberId: string;
+    actorUserId: string;
+    source: AttendanceSource;
+  },
+  opts: {
+    now: Date;
+    expiredPolicy: "confirm" | "block";
+    confirmExpiredMembership?: boolean;
+    audit: "manual" | "none";
+  },
+): Promise<{ sessionId: string }> {
+  const { now } = opts;
+
+  // Friendly pre-check; the partial unique index is the real guarantee
+  // against concurrent duplicates (its P2002 is translated below).
+  const openSession = await db.attendanceSession.findFirst({
+    where: {
+      organizationId: scope.organizationId,
+      memberId: scope.memberId,
+      checkOutAt: null,
+    },
+    select: { id: true },
+  });
+  if (openSession) {
+    throw new AttendanceAlreadyCheckedInError();
+  }
+
+  const membership = await db.membership.findFirst({
+    where: { memberId: scope.memberId, organizationId: scope.organizationId },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, expiryDate: true },
+  });
+  if (!membership) {
+    throw new AttendanceNoMembershipError();
+  }
+
+  const status: MembershipStatus = deriveMembershipStatus(
+    membership.expiryDate,
+    now,
+  );
+  if (status === "EXPIRED") {
+    if (opts.expiredPolicy === "block") {
+      throw new AttendanceMembershipExpiredError();
+    }
+    if (!opts.confirmExpiredMembership) {
+      throw new AttendanceConfirmationRequiredError(
+        toDateString(membership.expiryDate),
+      );
+    }
+  }
+
+  let sessionId: string;
+  try {
+    sessionId = await db.$transaction(async (tx) => {
+      const session = await tx.attendanceSession.create({
+        data: {
+          organizationId: scope.organizationId,
+          memberId: scope.memberId,
+          checkedInBy: scope.actorUserId,
+          source: scope.source,
+          checkInAt: now,
+        },
+        select: { id: true },
+      });
+      if (opts.audit === "manual") {
+        await writeAuditEvent(tx, {
+          organizationId: scope.organizationId,
+          actorUserId: scope.actorUserId,
+          event: AUDIT_EVENT_ATTENDANCE_MANUALLY_ADDED,
+          targetType: "AttendanceSession",
+          targetId: session.id,
+          metadata: {
+            memberId: scope.memberId,
+            membershipId: membership.id,
+            membershipStatus: status,
+            expiredConfirmation: status === "EXPIRED",
+          },
+        });
+      }
+      return session.id;
+    });
+  } catch (error) {
+    // A concurrent check-in won the race: the partial unique index
+    // rejected this insert. The member is checked in exactly once.
+    if (isUniqueViolation(error)) {
+      throw new AttendanceAlreadyCheckedInError();
+    }
+    throw error;
+  }
+
+  return { sessionId };
+}
+
+/**
  * Check a member in to the gym (staff-recorded, source MANUAL).
  *
  * The session and its ATTENDANCE_MANUALLY_ADDED audit event are written
@@ -239,12 +403,11 @@ export async function checkInMember(
   opts: { confirmExpiredMembership?: boolean; now?: Date } = {},
 ): Promise<{ sessionId: string }> {
   const scope = await resolveScope(userId);
-  if (!canManageAttendance(scope.role)) {
+  if (!canCheckInAttendance(scope.role)) {
     throw new AttendanceAuthorizationError(
       "You do not have permission to manage attendance.",
     );
   }
-  const now = opts.now ?? new Date();
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -254,77 +417,61 @@ export async function checkInMember(
     throw new AttendanceNotFoundError();
   }
 
-  // Friendly pre-check; the partial unique index is the real guarantee
-  // against concurrent duplicates (its P2002 is translated below).
-  const openSession = await db.attendanceSession.findFirst({
-    where: {
+  return createCheckInSession(
+    {
       organizationId: scope.organizationId,
       memberId: member.id,
-      checkOutAt: null,
+      actorUserId: scope.userId,
+      source: "MANUAL",
     },
-    select: { id: true },
-  });
-  if (openSession) {
-    throw new AttendanceAlreadyCheckedInError();
-  }
-
-  const membership = await db.membership.findFirst({
-    where: { memberId: member.id, organizationId: scope.organizationId },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, expiryDate: true },
-  });
-  if (!membership) {
-    throw new AttendanceNoMembershipError();
-  }
-
-  const status: MembershipStatus = deriveMembershipStatus(
-    membership.expiryDate,
-    now,
+    {
+      now: opts.now ?? new Date(),
+      expiredPolicy: "confirm",
+      confirmExpiredMembership: opts.confirmExpiredMembership,
+      audit: "manual",
+    },
   );
-  if (status === "EXPIRED" && !opts.confirmExpiredMembership) {
-    throw new AttendanceConfirmationRequiredError(
-      toDateString(membership.expiryDate),
-    );
+}
+
+/**
+ * Check the signed-in member THEMSELVES in (QR self-check-in, source QR).
+ *
+ * Authorization is the verified member session itself (ADR 021): the
+ * organization, the member record, and the actor all come from the
+ * session context — nothing is accepted from the client, and no Clerk
+ * identity is involved. A context whose linked Member record no longer
+ * exists fails with the generic not-found error.
+ *
+ * Differences from the staff path, by design:
+ * - NO audit event is written (ADR 017 §45 — normal member check-ins
+ *   are not audited; the attendance row is the history);
+ * - an EXPIRED membership BLOCKS the check-in
+ *   (AttendanceMembershipExpiredError) — there is deliberately no
+ *   confirmation parameter anywhere in this path; staff can still check
+ *   the member in via the confirmation flow.
+ */
+export async function checkInSelf(
+  context: MemberSessionContext,
+  opts: { now?: Date } = {},
+): Promise<{ sessionId: string }> {
+  const member = context.member;
+  if (!member) {
+    throw new AttendanceNotFoundError();
   }
 
-  let sessionId: string;
-  try {
-    sessionId = await db.$transaction(async (tx) => {
-      const session = await tx.attendanceSession.create({
-        data: {
-          organizationId: scope.organizationId,
-          memberId: member.id,
-          checkedInBy: scope.userId,
-          source: "MANUAL",
-          checkInAt: now,
-        },
-        select: { id: true },
-      });
-      await writeAuditEvent(tx, {
-        organizationId: scope.organizationId,
-        actorUserId: scope.userId,
-        event: AUDIT_EVENT_ATTENDANCE_MANUALLY_ADDED,
-        targetType: "AttendanceSession",
-        targetId: session.id,
-        metadata: {
-          memberId: member.id,
-          membershipId: membership.id,
-          membershipStatus: status,
-          expiredConfirmation: status === "EXPIRED",
-        },
-      });
-      return session.id;
-    });
-  } catch (error) {
-    // A concurrent check-in won the race: the partial unique index
-    // rejected this insert. The member is checked in exactly once.
-    if (isUniqueViolation(error)) {
-      throw new AttendanceAlreadyCheckedInError();
-    }
-    throw error;
-  }
-
-  return { sessionId };
+  return createCheckInSession(
+    {
+      organizationId: context.session.organizationId,
+      memberId: member.id,
+      actorUserId: context.user.id,
+      source: "QR",
+    },
+    {
+      now: opts.now ?? new Date(),
+      expiredPolicy: "block",
+      audit: "none",
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -566,4 +713,65 @@ export async function listTodayAttendance(
     ...toSessionItem(session, roleByUserId),
     memberName: session.member.name,
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Member self reads (Slice 2) — scoped exclusively to the verified
+// member-session context: organization and member come from the session
+// row, never from any client-supplied identifier, so another member's
+// records are unreachable through these functions.
+// ---------------------------------------------------------------------------
+
+/**
+ * The signed-in member's OWN attendance history in their session's gym,
+ * newest first. Returns null when the context's linked Member record no
+ * longer exists.
+ */
+export async function listOwnAttendance(
+  context: MemberSessionContext,
+  limit = 30,
+): Promise<AttendanceSessionItem[] | null> {
+  const member = context.member;
+  if (!member) return null;
+
+  const sessions = await db.attendanceSession.findMany({
+    where: {
+      organizationId: context.session.organizationId,
+      memberId: member.id,
+    },
+    orderBy: { checkInAt: "desc" },
+    take: Math.max(1, Math.floor(limit)),
+  });
+  const roleByUserId = await actorRolesByUserId(
+    context.session.organizationId,
+    sessions,
+  );
+  return sessions.map((session) => toSessionItem(session, roleByUserId));
+}
+
+/**
+ * The signed-in member's OWN currently open session in their session's
+ * gym, or null when they are not in the gym or the context's linked
+ * Member record no longer exists.
+ */
+export async function getOwnOpenSession(
+  context: MemberSessionContext,
+): Promise<AttendanceSessionItem | null> {
+  const member = context.member;
+  if (!member) return null;
+
+  const session = await db.attendanceSession.findFirst({
+    where: {
+      organizationId: context.session.organizationId,
+      memberId: member.id,
+      checkOutAt: null,
+    },
+  });
+  if (!session) return null;
+
+  const roleByUserId = await actorRolesByUserId(
+    context.session.organizationId,
+    [session],
+  );
+  return toSessionItem(session, roleByUserId);
 }

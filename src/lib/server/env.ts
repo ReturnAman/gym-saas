@@ -36,7 +36,7 @@ function required(name: string, source: NodeJS.ProcessEnv): string {
   return value;
 }
 
-export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
+function parseNodeEnv(source: NodeJS.ProcessEnv): NodeEnv {
   const nodeEnv = source.NODE_ENV ?? "development";
   if (nodeEnv !== "development" && nodeEnv !== "test" && nodeEnv !== "production") {
     throw new Error(
@@ -44,8 +44,12 @@ export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv 
         `Expected "development", "test", or "production".`,
     );
   }
+  return nodeEnv;
+}
+
+export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv {
   return {
-    nodeEnv,
+    nodeEnv: parseNodeEnv(source),
     appUrl: required("APP_URL", source),
     databaseUrl: required("DATABASE_URL", source),
     clerkPublishableKey: required("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", source),
@@ -60,4 +64,29 @@ export function validateEnv(source: NodeJS.ProcessEnv = process.env): ServerEnv 
  */
 export const publicEnv = {} as const;
 
-export const env: ServerEnv = validateEnv();
+/**
+ * The shared, eagerly validated environment.
+ *
+ * The core variables (NODE_ENV, DATABASE_URL, and both Clerk keys) are
+ * validated at module load, exactly as before — the application cannot
+ * run without them, and consumers such as the database module rely on
+ * that fail-fast behavior.
+ *
+ * `appUrl` is the single exception: it resolves lazily on access. Its
+ * only consumer is the gym QR poster page, which must be able to render
+ * a configuration message when APP_URL is missing or unusable instead
+ * of the whole module graph failing at import time. Accessing
+ * `env.appUrl` still validates with the same `required` rule and throws
+ * the same error when APP_URL is absent — the failure simply moves from
+ * import time to the one place that can present it safely. Use
+ * `validateEnv()` directly when an all-at-once strict check is needed.
+ */
+export const env: ServerEnv = {
+  nodeEnv: parseNodeEnv(process.env),
+  databaseUrl: required("DATABASE_URL", process.env),
+  clerkPublishableKey: required("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY", process.env),
+  clerkSecretKey: required("CLERK_SECRET_KEY", process.env),
+  get appUrl(): string {
+    return required("APP_URL", process.env);
+  },
+};

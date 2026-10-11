@@ -206,3 +206,55 @@
   color: light-dark(#5f5f5f, #a3a3a3);
   margin: 0 0 0.75rem;
 }
+
+/* --- Gym QR poster --- */
+
+.poster {
+  max-width: 26rem;
+  margin: 0 auto;
+  text-align: center;
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 2rem 1.5rem;
+}
+
+.poster h1 {
+  margin: 0 0 1.5rem;
+  font-size: 1.75rem;
+}
+
+.qrSvg {
+  display: flex;
+  justify-content: center;
+}
+
+.qrSvg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.posterCaption {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.checkInUrl {
+  font-size: 0.875rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+  word-break: break-all;
+  margin: 0;
+}
+
+/* On paper the poster stands alone: gym name, QR code, caption, and the
+ * readable URL. Controls and on-screen guidance stay off the printout. */
+@media print {
+  .noPrint {
+    display: none;
+  }
+
+  .poster {
+    border: none;
+    border-radius: 0;
+  }
+}

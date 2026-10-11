@@ -222,7 +222,7 @@ export default async function MemberDetailPage({
               )}
             </div>
           ) : (
-            attendancePermissions.canManage && (
+            attendancePermissions.canCheckIn && (
               <CheckInForm memberId={detail.id} from="member" />
             )
           )}

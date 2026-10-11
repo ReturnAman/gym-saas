@@ -68,10 +68,16 @@ export function SignInForm({ gymId }: { gymId: string }) {
     // Sync the tick state on entering the step: nowMs was initialized
     // when the form mounted (the phone step), so without this the
     // first countdown paint overstates the remaining time by however
-    // long the member spent before the code was requested.
-    setNowMs(Date.now());
+    // long the member spent before the code was requested. The sync is
+    // deferred to the next animation frame: setState synchronously in
+    // an effect body is disallowed (react-hooks/set-state-in-effect),
+    // and the frame callback runs before the following paint.
+    const frame = requestAnimationFrame(() => setNowMs(Date.now()));
     const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearInterval(id);
+    };
   }, [state.step]);
 
   if (state.step === "linking") {

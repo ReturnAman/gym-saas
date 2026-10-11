@@ -171,3 +171,15 @@ jobs:
 
       - name: Authenticated smoke test (Playwright)
         run: npm run test:e2e:auth
+
+      # Diagnostics for failed runs: Playwright's error context and
+      # traces (test-results/ only — never the .auth storage state,
+      # which lives under tests/e2e-auth/ and is gitignored).
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-auth-playwright-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

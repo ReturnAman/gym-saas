@@ -65,6 +65,11 @@ export function SignInForm({ gymId }: { gymId: string }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (state.step !== "otp") return;
+    // Sync the tick state on entering the step: nowMs was initialized
+    // when the form mounted (the phone step), so without this the
+    // first countdown paint overstates the remaining time by however
+    // long the member spent before the code was requested.
+    setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(id);
   }, [state.step]);

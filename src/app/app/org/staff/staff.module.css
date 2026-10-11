@@ -1,0 +1,219 @@
+/* Staff management page — mirrors members.module.css conventions. */
+
+.header {
+  margin-bottom: 1.5rem;
+}
+
+.header h1 {
+  margin: 0 0 0.25rem;
+}
+
+.gymNote {
+  margin: 0;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.section {
+  margin-bottom: 2rem;
+}
+
+.section h2 {
+  font-size: 1.125rem;
+  margin: 0 0 0.75rem;
+}
+
+.form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.field label {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.field input,
+.field select {
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  border-radius: 0.375rem;
+  background: transparent;
+}
+
+.button {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid transparent;
+  background: light-dark(#171717, #ededed);
+  color: light-dark(#ffffff, #171717);
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.secondaryButton {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.secondaryButton:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.dangerButton {
+  font: inherit;
+  font-weight: 600;
+  padding: 0.625rem 1.5rem;
+  border-radius: 0.375rem;
+  border: 1px solid light-dark(#b91c1c, #f87171);
+  background: transparent;
+  color: light-dark(#b91c1c, #f87171);
+  cursor: pointer;
+}
+
+.dangerButton:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.message {
+  margin: 0 0 1rem;
+}
+
+.messageError {
+  color: light-dark(#b91c1c, #f87171);
+}
+
+.messageOk {
+  color: light-dark(#15803d, #4ade80);
+}
+
+.candidateBox {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.candidateBox p {
+  margin: 0;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.row {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.rowHeader {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.rowName {
+  font-weight: 600;
+}
+
+.rowMeta {
+  color: light-dark(#5f5f5f, #a3a3a3);
+  font-size: 0.875rem;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.125rem 0.625rem;
+  border-radius: 999px;
+  border: 1px solid light-dark(#d4d4d4, #525252);
+  white-space: nowrap;
+}
+
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+}
+
+.inlineForm {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.confirmBox {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.confirmBox p {
+  margin: 0;
+  width: 100%;
+}
+
+.stateBox {
+  border: 1px solid light-dark(#e5e5e5, #3a3a3a);
+  border-radius: 0.5rem;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  display: grid;
+  gap: 0.75rem;
+  justify-items: center;
+}
+
+.stateBox h2 {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.stateBox p {
+  margin: 0;
+  max-width: 30rem;
+  color: light-dark(#5f5f5f, #a3a3a3);
+}
+
+.stateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}

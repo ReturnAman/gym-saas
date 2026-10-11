@@ -51,7 +51,7 @@ export default defineConfig({
     // to format-valid dummy keys so the app boots without real credentials.
     env: {
       APP_URL: APP_ORIGIN,
-      DATABASE_URL: "postgresql://ci:ci@localhost:5432/gymsaas_ci",
+      DATABASE_URL: process.env.DATABASE_URL ?? "postgresql://ci:ci@localhost:5432/gymsaas_ci",
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:
         clerkPublishableKey ?? "pk_test_ZHVtbXkubG9jYWwk",
       CLERK_SECRET_KEY: clerkSecretKey ?? "sk_test_dummy",

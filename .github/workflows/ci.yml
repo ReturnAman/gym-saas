@@ -68,3 +68,106 @@ jobs:
           test -f AGENTS.md
           test -f CHANGELOG.md
           test -f docs/20-CURRENT-STATE.md
+
+  # PostgreSQL integration tests: the opt-in tenant-integrity suites
+  # (RUN_DB_TESTS) against a disposable PostgreSQL 16 service. Kept as a
+  # separate job so the standard job above stays fast and database-free.
+  # The service credentials below are throwaway values for an ephemeral
+  # CI container only — they are not secrets and protect nothing.
+  db-tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gymsaas_test
+          POSTGRES_PASSWORD: gymsaas_test_password
+          POSTGRES_DB: gymsaas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gymsaas_test -d gymsaas_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Job-level: overrides the workflow placeholder for this job only.
+      # Points at the disposable service container, never at a real
+      # deployment or developer database.
+      DATABASE_URL: postgresql://gymsaas_test:gymsaas_test_password@localhost:5432/gymsaas_test
+      RUN_DB_TESTS: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Apply migrations to the disposable database
+        run: npx prisma migrate deploy
+
+      - name: PostgreSQL integration tests (Vitest)
+        run: npm run test:db
+
+  # Authenticated Playwright smoke test: a real Clerk sign-in by a
+  # test-mode OWNER on the dedicated CI development instance, against a
+  # disposable PostgreSQL 16 service. Isolated from the build and
+  # db-tests jobs; the E2E OWNER credential is scoped to this job only.
+  # If any required secret is missing, migrations fail, sign-in fails,
+  # or the smoke test does not execute, this job fails — the harness
+  # has no dummy fallbacks (see playwright.auth.config.ts).
+  e2e-auth:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gymsaas_test
+          POSTGRES_PASSWORD: gymsaas_test_password
+          POSTGRES_DB: gymsaas_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gymsaas_test -d gymsaas_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Disposable service database only — never a real deployment.
+      DATABASE_URL: postgresql://gymsaas_test:gymsaas_test_password@localhost:5432/gymsaas_test
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.CLERK_CI_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_CI_SECRET_KEY }}
+      # Test-mode OWNER account on the CI development instance (scoped
+      # to this job; the account exists only on that throwaway instance).
+      CLERK_E2E_OWNER_EMAIL: ${{ secrets.CLERK_E2E_OWNER_EMAIL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Apply migrations to the disposable database
+        run: npx prisma migrate deploy
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Authenticated smoke test (Playwright)
+        run: npm run test:e2e:auth

@@ -15,7 +15,9 @@
     "prisma:validate": "prisma validate",
     "start": "next start",
     "test": "vitest run",
+    "test:db": "node scripts/run-db-tests.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:auth": "playwright test -c playwright.auth.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
@@ -33,6 +35,7 @@
     "server-only": "^0.0.1"
   },
   "devDependencies": {
+    "@clerk/testing": "2.2.45",
     "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.3",
     "@types/pg": "^8.23.1",

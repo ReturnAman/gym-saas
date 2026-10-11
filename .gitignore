@@ -44,6 +44,7 @@ coverage/
 .nyc_output/
 test-results/
 playwright-report/
+tests/e2e-auth/.auth/
 
 # Misc
 *.tmp

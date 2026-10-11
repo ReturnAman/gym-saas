@@ -34,6 +34,7 @@ const SUITES = [
   "src/lib/server/__tests__/payment-tenant-integrity.test.ts",
   "src/lib/server/__tests__/attendance-tenant-integrity.test.ts",
   "src/lib/server/__tests__/staff-tenant-integrity.test.ts",
+  "src/lib/server/__tests__/payment-claims-tenant-integrity.test.ts",
   ...process.argv.slice(2),
 ];
 

@@ -481,6 +481,96 @@ export async function listPendingClaimsForOrganization(
   return rows.map(toClaimView);
 }
 
+const CLAIM_REVIEW_INCLUDE = {
+  payment: { select: { id: true, amount: true } },
+  member: { select: { name: true, phoneNumber: true } },
+  membership: { select: { plan: true, fee: true, expiryDate: true } },
+} as const;
+
+/** A pending claim with the display and balance context staff review against. */
+export interface PendingClaimReviewView extends PaymentClaimView {
+  memberName: string;
+  memberPhoneNumber: string;
+  membershipPlan: MembershipPlan;
+  membershipFeePaise: number;
+  membershipExpiryDate: string;
+  /** Confirmed payments only — the pending claim itself never counts. */
+  paidPaise: number;
+  outstandingPaise: number;
+}
+
+/**
+ * The gym's verification queue with member/membership display fields
+ * and per-membership balance context (C3-S1). Same authorization and
+ * primary-gym scope as listPendingClaimsForOrganization; balances come
+ * from one grouped sum over confirmed payments for the queued
+ * memberships — no per-claim queries, and pending claims are never
+ * included in the paid totals. The linked member and membership rows
+ * are guaranteed by the claims' composite foreign keys (a claim
+ * cannot exist without them, and no flow deletes members or
+ * memberships), so the include always resolves inside the claim's
+ * own organization.
+ */
+export async function listPendingClaimsForReview(
+  staffUserId: string,
+): Promise<PendingClaimReviewView[]> {
+  const scope = await requireVerifyScope(staffUserId);
+  const rows = await db.paymentClaim.findMany({
+    where: { organizationId: scope.organizationId, status: "PENDING" },
+    orderBy: { createdAt: "asc" },
+    include: CLAIM_REVIEW_INCLUDE,
+  });
+  const membershipIds = [...new Set(rows.map((row) => row.membershipId))];
+  const sums = await sumConfirmedPaymentsByMembership(
+    scope.organizationId,
+    membershipIds,
+  );
+  return rows.map((row) => {
+    const membershipFeePaise = decimalToPaise(row.membership.fee);
+    const paidPaise = sums.get(row.membershipId) ?? 0;
+    const { outstandingPaise } = deriveMembershipPayments(
+      membershipFeePaise,
+      paidPaise,
+    );
+    return {
+      ...toClaimView(row),
+      memberName: row.member.name,
+      memberPhoneNumber: row.member.phoneNumber,
+      membershipPlan: row.membership.plan,
+      membershipFeePaise,
+      membershipExpiryDate: row.membership.expiryDate.toISOString(),
+      paidPaise,
+      outstandingPaise,
+    };
+  });
+}
+
+/**
+ * One member's claim history for staff (all statuses, newest first).
+ * The member is re-verified inside the actor's scoped organization;
+ * a foreign or nonexistent member produces the same not-found error,
+ * so the read is not an oracle for other gyms' rosters.
+ */
+export async function listClaimsForMember(
+  staffUserId: string,
+  memberId: string,
+): Promise<PaymentClaimView[]> {
+  const scope = await requireVerifyScope(staffUserId);
+  const member = await db.member.findFirst({
+    where: { id: memberId, organizationId: scope.organizationId },
+    select: { id: true },
+  });
+  if (!member) {
+    throw new PaymentClaimNotFoundError("Member not found.");
+  }
+  const rows = await db.paymentClaim.findMany({
+    where: { organizationId: scope.organizationId, memberId: member.id },
+    orderBy: { createdAt: "desc" },
+    include: CLAIM_INCLUDE,
+  });
+  return rows.map(toClaimView);
+}
+
 async function findClaimInScope(organizationId: string, claimId: string) {
   const claim = await db.paymentClaim.findFirst({
     where: { id: claimId, organizationId },

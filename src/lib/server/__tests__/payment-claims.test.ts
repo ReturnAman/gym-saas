@@ -14,6 +14,7 @@ const {
   mockTxClaimUpdateMany,
   mockTxPaymentCreate,
   mockAuditLogCreate,
+  mockPaymentGroupBy,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -27,6 +28,7 @@ const {
   mockTxClaimUpdateMany: vi.fn(),
   mockTxPaymentCreate: vi.fn(),
   mockAuditLogCreate: vi.fn(),
+  mockPaymentGroupBy: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -38,6 +40,7 @@ vi.mock("@/lib/server/db", () => ({
       findFirst: mockClaimFindFirst,
       findMany: mockClaimFindMany,
     },
+    payment: { groupBy: mockPaymentGroupBy },
     $transaction: mockTransaction,
   },
 }));
@@ -58,8 +61,10 @@ import {
   PaymentClaimNotFoundError,
   canVerifyPaymentClaim,
   confirmPaymentClaim,
+  listClaimsForMember,
   listOwnPaymentClaims,
   listPendingClaimsForOrganization,
+  listPendingClaimsForReview,
   rejectPaymentClaim,
   submitPaymentClaim,
   type MemberClaimScope,
@@ -119,6 +124,7 @@ beforeEach(() => {
   mockTxClaimUpdateMany.mockResolvedValue({ count: 1 });
   mockTxPaymentCreate.mockResolvedValue({ id: PAYMENT_ID });
   mockAuditLogCreate.mockResolvedValue({ id: "audit-id" });
+  mockPaymentGroupBy.mockResolvedValue([]);
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
       $queryRaw: mockTxQueryRaw,
@@ -303,6 +309,167 @@ describe("listPendingClaimsForOrganization", () => {
     const arg = mockClaimFindMany.mock.calls[0]?.[0];
     expect(arg.where).toEqual({ organizationId: ORG_ID, status: "PENDING" });
     expect(arg.orderBy).toEqual({ createdAt: "asc" });
+  });
+});
+
+function reviewRow(overrides: Record<string, unknown> = {}) {
+  return {
+    ...claimRow(),
+    createdAt: new Date("2026-10-11T09:00:00.000Z"),
+    verifiedAt: null,
+    payment: null,
+    member: { name: "Asha Rao", phoneNumber: "9000000021" },
+    membership: {
+      plan: "MONTHLY",
+      fee: new Prisma.Decimal("1000"),
+      expiryDate: new Date("2026-02-01T00:00:00.000Z"),
+    },
+    ...overrides,
+  };
+}
+
+describe("listPendingClaimsForReview", () => {
+  it("denies roles that cannot verify claims", async () => {
+    mockOrgMembershipFindFirst.mockResolvedValue(staffMembership("TRAINER"));
+    await expect(
+      listPendingClaimsForReview(STAFF_ID),
+    ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
+    expect(mockClaimFindMany).not.toHaveBeenCalled();
+  });
+
+  it("queries only the actor's gym pending claims, oldest first, with display fields", async () => {
+    mockClaimFindMany.mockResolvedValue([]);
+    await listPendingClaimsForReview(STAFF_ID);
+    const arg = mockClaimFindMany.mock.calls[0]?.[0];
+    expect(arg.where).toEqual({ organizationId: ORG_ID, status: "PENDING" });
+    expect(arg.orderBy).toEqual({ createdAt: "asc" });
+    expect(arg.include.member.select).toEqual({
+      name: true,
+      phoneNumber: true,
+    });
+    expect(arg.include.membership.select).toEqual({
+      plan: true,
+      fee: true,
+      expiryDate: true,
+    });
+  });
+
+  it("maps member/membership display fields and confirmed-only balance context in one grouped sum", async () => {
+    const OTHER_MEMBERSHIP = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    mockClaimFindMany.mockResolvedValue([
+      reviewRow(),
+      reviewRow({
+        id: "88888888-8888-4888-8888-888888888888",
+        membershipId: OTHER_MEMBERSHIP,
+        member: { name: "Ravi Shah", phoneNumber: "9000000022" },
+        membership: {
+          plan: "QUARTERLY",
+          fee: new Prisma.Decimal("2500"),
+          expiryDate: new Date("2026-04-01T00:00:00.000Z"),
+        },
+      }),
+    ]);
+    mockPaymentGroupBy.mockResolvedValue([
+      {
+        membershipId: MEMBERSHIP_ID,
+        _sum: { amount: new Prisma.Decimal("400") },
+      },
+    ]);
+
+    const views = await listPendingClaimsForReview(STAFF_ID);
+
+    expect(mockPaymentGroupBy).toHaveBeenCalledTimes(1);
+    expect(views).toHaveLength(2);
+    expect(views[0]).toMatchObject({
+      memberName: "Asha Rao",
+      memberPhoneNumber: "9000000021",
+      membershipPlan: "MONTHLY",
+      membershipFeePaise: 100_000,
+      membershipExpiryDate: "2026-02-01T00:00:00.000Z",
+      paidPaise: 40_000,
+      outstandingPaise: 60_000,
+      claimedAmountPaise: 600_000,
+      status: "PENDING",
+    });
+    // No confirmed payments for the second membership: paid stays 0
+    // and the pending claim itself is never counted as paid.
+    expect(views[1]).toMatchObject({
+      memberName: "Ravi Shah",
+      membershipPlan: "QUARTERLY",
+      membershipFeePaise: 250_000,
+      paidPaise: 0,
+      outstandingPaise: 250_000,
+    });
+  });
+
+  it("leaves the existing PaymentClaimView shape untouched for member reads", async () => {
+    mockClaimFindMany.mockResolvedValue([
+      {
+        ...claimRow(),
+        organizationId: ORG_ID,
+        createdAt: new Date("2026-10-11T09:00:00.000Z"),
+        verifiedAt: null,
+        payment: null,
+      },
+    ]);
+    const views = await listOwnPaymentClaims(memberScope);
+    expect(views[0]).not.toHaveProperty("memberName");
+    expect(views[0]).not.toHaveProperty("paidPaise");
+  });
+});
+
+describe("listClaimsForMember", () => {
+  it("denies roles that cannot verify claims", async () => {
+    mockOrgMembershipFindFirst.mockResolvedValue(staffMembership("TRAINER"));
+    await expect(
+      listClaimsForMember(STAFF_ID, MEMBER_ID),
+    ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
+    expect(mockClaimFindMany).not.toHaveBeenCalled();
+  });
+
+  it("returns the member's claims newest first across statuses", async () => {
+    mockClaimFindMany.mockResolvedValue([
+      {
+        ...claimRow({ status: "CONFIRMED" }),
+        organizationId: ORG_ID,
+        createdAt: new Date("2026-10-12T09:00:00.000Z"),
+        verifiedAt: new Date("2026-10-12T10:00:00.000Z"),
+        payment: { id: PAYMENT_ID, amount: new Prisma.Decimal("6000.00") },
+      },
+      {
+        ...claimRow(),
+        organizationId: ORG_ID,
+        createdAt: new Date("2026-10-11T09:00:00.000Z"),
+        verifiedAt: null,
+        payment: null,
+      },
+    ]);
+    const views = await listClaimsForMember(STAFF_ID, MEMBER_ID);
+    const memberArg = mockMemberFindFirst.mock.calls.at(-1)?.[0];
+    expect(memberArg.where).toEqual({ id: MEMBER_ID, organizationId: ORG_ID });
+    const claimArg = mockClaimFindMany.mock.calls[0]?.[0];
+    expect(claimArg.where).toEqual({
+      organizationId: ORG_ID,
+      memberId: MEMBER_ID,
+    });
+    expect(claimArg.orderBy).toEqual({ createdAt: "desc" });
+    expect(views.map((view) => view.status)).toEqual(["CONFIRMED", "PENDING"]);
+    expect(views[0]?.confirmedAmountPaise).toBe(600_000);
+  });
+
+  it("treats foreign and nonexistent members identically as not found", async () => {
+    mockMemberFindFirst.mockResolvedValue(null);
+    const foreign = await listClaimsForMember(STAFF_ID, MEMBER_ID).catch(
+      (error: unknown) => error,
+    );
+    const missing = await listClaimsForMember(
+      STAFF_ID,
+      "99999999-9999-4999-8999-999999999999",
+    ).catch((error: unknown) => error);
+    expect(foreign).toBeInstanceOf(PaymentClaimNotFoundError);
+    expect(missing).toBeInstanceOf(PaymentClaimNotFoundError);
+    expect((foreign as Error).message).toBe((missing as Error).message);
+    expect(mockClaimFindMany).not.toHaveBeenCalled();
   });
 });
 

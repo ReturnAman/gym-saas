@@ -35,7 +35,9 @@ import {
   PaymentClaimNotFoundError,
   confirmPaymentClaim,
   getOwnMembershipSummary,
+  listClaimsForMember,
   listOwnPaymentClaims,
+  listPendingClaimsForReview,
   rejectPaymentClaim,
   submitPaymentClaim,
   type MemberClaimScope,
@@ -715,6 +717,109 @@ describe("payment claim tenant integrity", () => {
           );
           expect(crossOrigin.status).toBe(403);
           cookieJar.clear();
+        });
+      });
+
+      describe("C3-S1 claim review reads", () => {
+        it("review queue is org-scoped, FIFO, and carries display fields + confirmed-only balance context", async () => {
+          const a = await seedGym("S1Q");
+          const b = await seedGym("S1Q2");
+          const staffA = await seedStaff(a.org.id, "S1Q");
+          const m1 = await seedMember(a.org.id, "S1Q-a");
+          const m2 = await seedMember(a.org.id, "S1Q-b");
+          const mb = await seedMember(b.org.id, "S1Q-c");
+          await db.payment.create({
+            data: {
+              organizationId: a.org.id,
+              memberId: m1.member.id,
+              membershipId: m1.membership.id,
+              amount: new Prisma.Decimal("400"),
+              paymentMethod: "CASH",
+              confirmedBy: a.owner.id,
+              confirmedAt: new Date(),
+            },
+          });
+          const c1 = await submitPaymentClaim(m1.scope, claimInput("600"));
+          const c2 = await submitPaymentClaim(m2.scope, claimInput("1000"));
+          await submitPaymentClaim(mb.scope, claimInput("700"));
+
+          const queue = await listPendingClaimsForReview(staffA.id);
+          // Only gym A's claims, oldest first — gym B's claim never appears.
+          expect(queue.map((claim) => claim.id)).toEqual([
+            c1.claimId,
+            c2.claimId,
+          ]);
+          expect(queue[0]).toMatchObject({
+            memberName: "Claims Member S1Q-a",
+            memberPhoneNumber: "9000000021",
+            membershipPlan: "MONTHLY",
+            membershipFeePaise: 100_000,
+            paidPaise: 40_000,
+            outstandingPaise: 60_000,
+            status: "PENDING",
+          });
+          expect(queue[0]?.membershipExpiryDate).toBe(
+            new Date(Date.UTC(2026, 1, 1)).toISOString(),
+          );
+          // The pending 600 claim is NOT in the paid total: only the
+          // confirmed 400 counts.
+          expect(queue[1]?.paidPaise).toBe(0);
+          expect(queue[1]?.outstandingPaise).toBe(100_000);
+        });
+
+        it("member history is newest-first across statuses; foreign and missing members are indistinguishable", async () => {
+          const a = await seedGym("S1H");
+          const b = await seedGym("S1H2");
+          const staffA = await seedStaff(a.org.id, "S1H");
+          const staffB = await seedStaff(b.org.id, "S1H-b");
+          const m = await seedMember(a.org.id, "S1H");
+          const first = await submitPaymentClaim(m.scope, claimInput("300"));
+          const second = await submitPaymentClaim(m.scope, {
+            amount: "200",
+            paymentMethod: "CASH",
+            reference: "",
+          });
+          await confirmPaymentClaim(staffA.id, first.claimId);
+
+          const history = await listClaimsForMember(staffA.id, m.member.id);
+          expect(history.map((claim) => claim.id)).toEqual([
+            second.claimId,
+            first.claimId,
+          ]);
+          expect(history.map((claim) => claim.status)).toEqual([
+            "PENDING",
+            "CONFIRMED",
+          ]);
+          expect(history[1]?.confirmedAmountPaise).toBe(30_000);
+
+          await expect(
+            listClaimsForMember(staffB.id, m.member.id),
+          ).rejects.toBeInstanceOf(PaymentClaimNotFoundError);
+          await expect(
+            listClaimsForMember(
+              staffA.id,
+              "99999999-9999-4999-8999-999999999999",
+            ),
+          ).rejects.toBeInstanceOf(PaymentClaimNotFoundError);
+        });
+
+        it("denies TRAINER on both review reads", async () => {
+          const a = await seedGym("S1T");
+          const trainer = await seedUser("trainer-S1T");
+          await db.organizationMembership.create({
+            data: {
+              userId: trainer.id,
+              organizationId: a.org.id,
+              role: "TRAINER",
+            },
+          });
+          const m = await seedMember(a.org.id, "S1T");
+          await expect(
+            listPendingClaimsForReview(trainer.id),
+          ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
+          await expect(
+            listClaimsForMember(trainer.id, m.member.id),
+          ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
         });
       });
     },

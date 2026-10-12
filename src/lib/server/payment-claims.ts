@@ -3,9 +3,15 @@ import "server-only";
 import { Prisma, type PaymentClaimStatus, type Role } from "@prisma/client";
 
 import {
+  deriveMembershipPayments,
+  deriveMembershipStatus,
+  derivePaymentStatus,
   validatePaymentInput,
+  type MembershipPlan,
+  type MembershipStatus,
   type PaymentInput,
   type PaymentMethod,
+  type PaymentStatus,
 } from "../members";
 import { getPrimaryMembership } from "./authorization";
 import {
@@ -16,7 +22,8 @@ import {
   writeAuditEvent,
 } from "./audit";
 import { db } from "./db";
-import { canRecordPayment } from "./payments";
+import type { MemberSessionContext } from "./member-session";
+import { canRecordPayment, sumConfirmedPaymentsByMembership } from "./payments";
 
 /**
  * Server-side payment claims service (04-DATABASE-DESIGN §13;
@@ -124,6 +131,29 @@ export interface MemberClaimScope {
   userId: string;
   organizationId: string;
   memberId: string;
+}
+
+/**
+ * Translate a resolved member session context into a claim scope —
+ * the single place this security-sensitive mapping lives. Identity
+ * comes only from the server-side session chain (ADR 021): the user,
+ * the session's organization, and the Member record linked to that
+ * user in that gym. A session without a linked Member record has no
+ * claim scope.
+ */
+export function memberClaimScope(
+  context: MemberSessionContext,
+): MemberClaimScope {
+  if (!context.member) {
+    throw new PaymentClaimAuthorizationError(
+      "This session is not linked to a member record.",
+    );
+  }
+  return {
+    userId: context.user.id,
+    organizationId: context.organization.id,
+    memberId: context.member.id,
+  };
 }
 
 interface StaffScope {
@@ -380,6 +410,62 @@ export async function listOwnPaymentClaims(
     include: CLAIM_INCLUDE,
   });
   return rows.map(toClaimView);
+}
+
+/** The member's own current-membership balance view (member surface). */
+export interface OwnMembershipSummary {
+  membershipId: string;
+  plan: MembershipPlan;
+  startDate: string;
+  expiryDate: string;
+  membershipStatus: MembershipStatus;
+  feePaise: number;
+  paidPaise: number;
+  outstandingPaise: number;
+  paymentStatus: PaymentStatus;
+}
+
+/**
+ * The scoped member's latest membership with its derived balance —
+ * the same derivation the staff views use (fee vs SUM of confirmed
+ * payments; claims never counted). Returns null when the member has
+ * no membership in the scoped gym. Tenant safety is structural: the
+ * membership lookup is pinned to the scope's organization AND member,
+ * and the payment sum is organization-pinned by the ledger helper.
+ */
+export async function getOwnMembershipSummary(
+  scope: MemberClaimScope,
+): Promise<OwnMembershipSummary | null> {
+  if (!scope.userId || !scope.organizationId || !scope.memberId) {
+    throw new PaymentClaimAuthorizationError("Authentication is required.");
+  }
+  const membership = await db.membership.findFirst({
+    where: {
+      organizationId: scope.organizationId,
+      memberId: scope.memberId,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  if (!membership) {
+    return null;
+  }
+  const sums = await sumConfirmedPaymentsByMembership(scope.organizationId, [
+    membership.id,
+  ]);
+  const feePaise = membership.fee.mul(100).toNumber();
+  const paidPaise = sums.get(membership.id) ?? 0;
+  const { outstandingPaise } = deriveMembershipPayments(feePaise, paidPaise);
+  return {
+    membershipId: membership.id,
+    plan: membership.plan,
+    startDate: membership.startDate.toISOString(),
+    expiryDate: membership.expiryDate.toISOString(),
+    membershipStatus: deriveMembershipStatus(membership.expiryDate),
+    feePaise,
+    paidPaise,
+    outstandingPaise,
+    paymentStatus: derivePaymentStatus(feePaise, paidPaise),
+  };
 }
 
 /** The gym's undecided claims, oldest first — the verification queue. */

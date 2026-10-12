@@ -60,6 +60,12 @@ export default async function MemberPage() {
       <p>
         <Link href="/member/scan">Scan gym QR</Link>
       </p>
+      <h2>Payments</h2>
+      <p>
+        <Link href="/member/payments">
+          View your payments and tell the gym you paid
+        </Link>
+      </p>
     </main>
   );
 }

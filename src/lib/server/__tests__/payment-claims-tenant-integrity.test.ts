@@ -2,11 +2,31 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Prisma } from "@prisma/client";
 
+const { cookieJar } = vi.hoisted(() => ({
+  cookieJar: new Map<string, string>(),
+}));
+// The C2 route tests resolve REAL member sessions from the database;
+// only the cookie transport is replaced, with a jar the tests fill.
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => {
+      const value = cookieJar.get(name);
+      return value === undefined ? undefined : { name, value };
+    },
+  }),
+}));
+
+import { POST as postClaimRoute } from "@/app/api/member-payments/claims/route";
 import { db } from "@/lib/server/db";
 import { deriveMembershipPayments } from "@/lib/members";
+import {
+  MEMBER_SESSION_COOKIE_NAME,
+  generateMemberSessionToken,
+  hashMemberSessionToken,
+} from "@/lib/server/member-session";
 import {
   PaymentClaimAuthorizationError,
   PaymentClaimConflictError,
@@ -14,6 +34,7 @@ import {
   PaymentClaimLimitError,
   PaymentClaimNotFoundError,
   confirmPaymentClaim,
+  getOwnMembershipSummary,
   listOwnPaymentClaims,
   rejectPaymentClaim,
   submitPaymentClaim,
@@ -532,6 +553,169 @@ describe("payment claim tenant integrity", () => {
         expect(
           await db.payment.count({ where: { paymentClaimId: claimId } }),
         ).toBe(0);
+      });
+
+      describe("C2 member payments surface", () => {
+        async function seedSession(userId: string, orgId: string) {
+          const rawToken = generateMemberSessionToken();
+          await db.memberSession.create({
+            data: {
+              userId,
+              organizationId: orgId,
+              tokenHash: hashMemberSessionToken(rawToken),
+              expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+              lastSeenAt: new Date(),
+            },
+          });
+          return rawToken;
+        }
+
+        it("summary derives the balance from confirmed payments only; a submitted claim moves nothing", async () => {
+          const { org, owner } = await seedGym("C2S");
+          const seeded = await seedMember(org.id, "C2S");
+          await db.payment.create({
+            data: {
+              organizationId: org.id,
+              memberId: seeded.member.id,
+              membershipId: seeded.membership.id,
+              amount: new Prisma.Decimal("400"),
+              paymentMethod: "CASH",
+              confirmedBy: owner.id,
+              confirmedAt: new Date(),
+            },
+          });
+
+          const before = await getOwnMembershipSummary(seeded.scope);
+          expect(before).toMatchObject({
+            plan: "MONTHLY",
+            feePaise: 100_000,
+            paidPaise: 40_000,
+            outstandingPaise: 60_000,
+            paymentStatus: "PARTIALLY_PAID",
+          });
+
+          await submitPaymentClaim(seeded.scope, claimInput("600"));
+
+          const after = await getOwnMembershipSummary(seeded.scope);
+          expect(after?.feePaise).toBe(before?.feePaise);
+          expect(after?.paidPaise).toBe(before?.paidPaise);
+          expect(after?.outstandingPaise).toBe(before?.outstandingPaise);
+          expect(after?.paymentStatus).toBe(before?.paymentStatus);
+        });
+
+        it("summary is null without a membership and cannot be forged across gyms", async () => {
+          const a = await seedGym("C2N");
+          const b = await seedGym("C2N2");
+          const seededA = await seedMember(a.org.id, "C2N");
+          phoneCounter += 1;
+          const bareUser = await seedUser(
+            "member-C2N-bare",
+            `93${String(phoneCounter).padStart(10, "0")}`,
+          );
+          const bareMember = await db.member.create({
+            data: {
+              organizationId: b.org.id,
+              name: "Bare Member C2N",
+              phoneNumber: "9000000099",
+              userId: bareUser.id,
+            },
+            select: { id: true },
+          });
+
+          // No membership in the scoped gym -> null.
+          expect(
+            await getOwnMembershipSummary({
+              userId: bareUser.id,
+              organizationId: b.org.id,
+              memberId: bareMember.id,
+            }),
+          ).toBeNull();
+
+          // Gym A's member id presented under gym B's scope -> null:
+          // the read is pinned to (organization, member) together.
+          expect(
+            await getOwnMembershipSummary({
+              userId: seededA.memberUser.id,
+              organizationId: b.org.id,
+              memberId: seededA.member.id,
+            }),
+          ).toBeNull();
+        });
+
+        it("the claims route scopes by the real session and ignores forged body identity", async () => {
+          const { org } = await seedGym("C2R");
+          const other = await seedGym("C2R2");
+          const seeded = await seedMember(org.id, "C2R");
+          await db.organizationMembership.create({
+            data: {
+              userId: seeded.memberUser.id,
+              organizationId: org.id,
+              role: "MEMBER",
+            },
+          });
+          const rawToken = await seedSession(seeded.memberUser.id, org.id);
+
+          const post = (
+            body: unknown,
+            headers: Record<string, string> = {},
+          ) =>
+            postClaimRoute(
+              new Request("https://gym.example.com/api/member-payments/claims", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  host: "gym.example.com",
+                  origin: "https://gym.example.com",
+                  ...headers,
+                },
+                body: JSON.stringify(body),
+              }),
+            );
+
+          cookieJar.set(MEMBER_SESSION_COOKIE_NAME, rawToken);
+          const created = await post({
+            amount: "250",
+            paymentMethod: "UPI",
+            reference: "UTR9",
+            organizationId: other.org.id,
+            memberId: "forged-member",
+            userId: "forged-user",
+          });
+          expect(created.status).toBe(201);
+
+          const stored = await db.paymentClaim.findMany({
+            where: { memberId: seeded.member.id },
+          });
+          expect(stored).toHaveLength(1);
+          expect(stored[0]?.organizationId).toBe(org.id);
+          expect(stored[0]?.status).toBe("PENDING");
+          expect(
+            (await getOwnMembershipSummary(seeded.scope))?.paidPaise,
+          ).toBe(0);
+
+          const duplicate = await post({
+            amount: "250",
+            paymentMethod: "UPI",
+            reference: "UTR9",
+          });
+          expect(duplicate.status).toBe(409);
+
+          cookieJar.clear();
+          const anonymous = await post({
+            amount: "250",
+            paymentMethod: "UPI",
+            reference: "OTHER",
+          });
+          expect(anonymous.status).toBe(401);
+
+          cookieJar.set(MEMBER_SESSION_COOKIE_NAME, rawToken);
+          const crossOrigin = await post(
+            { amount: "1", paymentMethod: "UPI", reference: "" },
+            { origin: "https://evil.example.com" },
+          );
+          expect(crossOrigin.status).toBe(403);
+          cookieJar.clear();
+        });
       });
     },
   );

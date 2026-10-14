@@ -6,6 +6,10 @@ import { redirect } from "next/navigation";
 import { formatDate, parseDateInput } from "@/lib/members";
 import { requireCurrentUser } from "@/lib/server/auth";
 import {
+  classifyDatabaseError,
+  DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+} from "@/lib/server/db-errors";
+import {
   AttendanceAlreadyCheckedInError,
   AttendanceAuthorizationError,
   AttendanceConfirmationRequiredError,
@@ -104,8 +108,14 @@ export async function checkInMemberAction(
     ) {
       return { ok: false, message: error.message, errors: {} };
     }
-    // Unknown failures (e.g. database errors) get a generic message —
-    // never leak internals to the user.
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+      };
+    }
+    // Unknown failures get a generic message — never leak internals.
     return {
       ok: false,
       message: "Could not check the member in. Please try again.",
@@ -140,6 +150,13 @@ export async function checkOutMemberAction(
     ) {
       return { ok: false, message: error.message, errors: {} };
     }
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+      };
+    }
     return {
       ok: false,
       message: "Could not check the member out. Please try again.",
@@ -168,6 +185,13 @@ export async function checkOutAllOpenSessionsAction(
   } catch (error) {
     if (error instanceof AttendanceAuthorizationError) {
       return { ok: false, message: error.message, errors: {} };
+    }
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+      };
     }
     return {
       ok: false,

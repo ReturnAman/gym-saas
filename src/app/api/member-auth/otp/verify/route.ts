@@ -1,5 +1,18 @@
 import { NextResponse } from "next/server";
 
+import {
+  resolveCorrelationId,
+  withCorrelationId,
+} from "@/lib/server/correlation";
+import {
+  classifyDatabaseError,
+  DATABASE_UNAVAILABLE_BODY,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logProviderUnavailable,
+  logUnexpectedError,
+} from "@/lib/server/logger";
 import { verifyMemberOtp } from "@/lib/server/member-auth";
 import { OtpVerificationError } from "@/lib/server/otp-service";
 import { SmsProviderError } from "@/lib/server/sms-provider";
@@ -14,6 +27,7 @@ import { SmsProviderError } from "@/lib/server/sms-provider";
  * global, not challenge-specific, so it reveals nothing).
  */
 export async function POST(request: Request) {
+  const requestId = resolveCorrelationId(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -43,24 +57,50 @@ export async function POST(request: Request) {
       return genericFailure();
     }
     if (error instanceof SmsProviderError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "OTP_UNAVAILABLE",
-            message: "We could not verify the code right now. Please try again later.",
+      logProviderUnavailable({
+        boundary: "POST /api/member-auth/otp/verify",
+        requestId,
+      });
+      return withCorrelationId(
+        NextResponse.json(
+          {
+            error: {
+              code: "OTP_UNAVAILABLE",
+              message: "We could not verify the code right now. Please try again later.",
+            },
           },
-        },
-        { status: 503 },
+          { status: 503 },
+        ),
+        requestId,
       );
     }
-    return NextResponse.json(
-      {
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Something went wrong. Please try again.",
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({
+        boundary: "POST /api/member-auth/otp/verify",
+        requestId,
+        error,
+      });
+      return withCorrelationId(
+        NextResponse.json(DATABASE_UNAVAILABLE_BODY, { status: 503 }),
+        requestId,
+      );
+    }
+    logUnexpectedError({
+      boundary: "POST /api/member-auth/otp/verify",
+      requestId,
+      error,
+    });
+    return withCorrelationId(
+      NextResponse.json(
+        {
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Something went wrong. Please try again.",
+          },
         },
-      },
-      { status: 500 },
+        { status: 500 },
+      ),
+      requestId,
     );
   }
 }

@@ -1,6 +1,19 @@
 import { NextResponse } from "next/server";
 
 import { MemberValidationError } from "@/lib/members";
+import {
+  resolveCorrelationId,
+  withCorrelationId,
+} from "@/lib/server/correlation";
+import {
+  classifyDatabaseError,
+  DATABASE_UNAVAILABLE_BODY,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logProviderUnavailable,
+  logUnexpectedError,
+} from "@/lib/server/logger";
 import { requestMemberOtp } from "@/lib/server/member-auth";
 import { SmsProviderError } from "@/lib/server/sms-provider";
 
@@ -16,6 +29,7 @@ import { SmsProviderError } from "@/lib/server/sms-provider";
  * membership.
  */
 export async function POST(request: Request) {
+  const requestId = resolveCorrelationId(request);
   let body: unknown;
   try {
     body = await request.json();
@@ -45,24 +59,50 @@ export async function POST(request: Request) {
       return validationError();
     }
     if (error instanceof SmsProviderError) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "OTP_UNAVAILABLE",
-            message: "We could not send a code right now. Please try again later.",
+      logProviderUnavailable({
+        boundary: "POST /api/member-auth/otp/request",
+        requestId,
+      });
+      return withCorrelationId(
+        NextResponse.json(
+          {
+            error: {
+              code: "OTP_UNAVAILABLE",
+              message: "We could not send a code right now. Please try again later.",
+            },
           },
-        },
-        { status: 503 },
+          { status: 503 },
+        ),
+        requestId,
       );
     }
-    return NextResponse.json(
-      {
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Something went wrong. Please try again.",
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({
+        boundary: "POST /api/member-auth/otp/request",
+        requestId,
+        error,
+      });
+      return withCorrelationId(
+        NextResponse.json(DATABASE_UNAVAILABLE_BODY, { status: 503 }),
+        requestId,
+      );
+    }
+    logUnexpectedError({
+      boundary: "POST /api/member-auth/otp/request",
+      requestId,
+      error,
+    });
+    return withCorrelationId(
+      NextResponse.json(
+        {
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Something went wrong. Please try again.",
+          },
         },
-      },
-      { status: 500 },
+        { status: 500 },
+      ),
+      requestId,
     );
   }
 }

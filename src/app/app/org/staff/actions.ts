@@ -5,6 +5,14 @@ import type { Role } from "@prisma/client";
 
 import { requireCurrentUser } from "@/lib/server/auth";
 import {
+  classifyDatabaseError,
+  DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
+import {
   ClerkDirectoryUnavailableError,
   STAFF_SIGN_IN_FIRST_MESSAGE,
   StaffAccountNotFoundError,
@@ -64,6 +72,11 @@ function toSafeMessage(error: unknown, fallback: string): string {
   ) {
     return error.message;
   }
+  if (classifyDatabaseError(error)) {
+    logDatabaseFailure({ boundary: "action:staff", error });
+    return DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE;
+  }
+  logUnexpectedError({ boundary: "action:staff", error });
   return fallback;
 }
 

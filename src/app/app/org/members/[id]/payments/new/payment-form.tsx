@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 
+import { newIdempotencyToken } from "@/lib/idempotency";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABELS } from "@/lib/members";
 
 import {
@@ -24,10 +25,22 @@ export function RecordPaymentForm({ memberId }: { memberId: string }) {
     recordPaymentAction,
     INITIAL_PAYMENT_FORM_STATE,
   );
+  // One idempotency token per intentional operation (H4): it is minted
+  // when this form instance mounts and resubmitted unchanged on every
+  // retry, so a double-click or a retry after a lost response resolves
+  // to the original payment instead of recording a second one. A
+  // successful submit navigates away, so the next payment gets a fresh
+  // form — and a fresh token.
+  const [idempotencyToken] = useState(() => newIdempotencyToken());
 
   return (
     <form action={formAction} className={styles.form}>
       <input type="hidden" name="memberId" value={memberId} />
+      <input
+        type="hidden"
+        name="idempotencyToken"
+        value={idempotencyToken}
+      />
 
       {state.message && (
         <p role="alert" className={styles.formError}>

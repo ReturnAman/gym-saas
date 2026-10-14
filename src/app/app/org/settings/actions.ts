@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 
 import { requireCurrentUser } from "@/lib/server/auth";
 import {
+  classifyDatabaseError,
+  DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+} from "@/lib/server/db-errors";
+import {
   OrganizationProfileAuthorizationError,
   OrganizationProfileValidationError,
   updateOrganizationProfile,
@@ -46,8 +50,15 @@ export async function updateOrganizationProfileAction(
     if (error instanceof OrganizationProfileAuthorizationError) {
       return { ok: false, message: error.message, errors: {} };
     }
-    // Unknown failures (e.g. database errors) get a generic message —
-    // never leak internals to the user (AGENTS.md §18).
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+      };
+    }
+    // Unknown failures get a generic message — never leak internals to
+    // the user (AGENTS.md §18).
     return {
       ok: false,
       message: "Could not save the gym profile. Please try again.",

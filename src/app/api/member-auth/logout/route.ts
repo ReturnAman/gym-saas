@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 
 import {
+  resolveCorrelationId,
+  withCorrelationId,
+} from "@/lib/server/correlation";
+import {
+  classifyDatabaseError,
+  DATABASE_UNAVAILABLE_BODY,
+} from "@/lib/server/db-errors";
+import { logDatabaseFailure } from "@/lib/server/logger";
+import {
   clearMemberSessionCookie,
   isSameOriginRequest,
   readMemberSessionToken,
@@ -17,6 +26,7 @@ import {
  * is authenticated by the cookie alone.
  */
 export async function POST(request: Request) {
+  const requestId = resolveCorrelationId(request);
   if (!isSameOriginRequest(request)) {
     return NextResponse.json(
       {
@@ -28,7 +38,29 @@ export async function POST(request: Request) {
       { status: 403 },
     );
   }
-  await revokeMemberSession(await readMemberSessionToken());
+  try {
+    await revokeMemberSession(await readMemberSessionToken());
+  } catch (error) {
+    if (classifyDatabaseError(error)) {
+      // Revocation did not happen server-side — do not claim it did.
+      // Still clear the local cookie so this browser stops presenting
+      // the token; the session itself expires on its own schedule.
+      logDatabaseFailure({
+        boundary: "POST /api/member-auth/logout",
+        requestId,
+        error,
+      });
+      await clearMemberSessionCookie();
+      return withCorrelationId(
+        NextResponse.json(DATABASE_UNAVAILABLE_BODY, { status: 503 }),
+        requestId,
+      );
+    }
+    throw error;
+  }
   await clearMemberSessionCookie();
-  return NextResponse.json({ loggedOut: true });
+  return withCorrelationId(
+    NextResponse.json({ loggedOut: true }),
+    requestId,
+  );
 }

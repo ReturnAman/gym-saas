@@ -6,6 +6,18 @@ import {
   isSameOriginRequest,
 } from "@/lib/server/member-session";
 import {
+  resolveCorrelationId,
+  withCorrelationId,
+} from "@/lib/server/correlation";
+import {
+  classifyDatabaseError,
+  DATABASE_UNAVAILABLE_BODY,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
+import {
   PaymentClaimAuthorizationError,
   PaymentClaimDuplicateError,
   PaymentClaimLimitError,
@@ -31,6 +43,7 @@ import {
  * block, and pending cap are the authoritative checks.
  */
 export async function POST(request: Request) {
+  const requestId = resolveCorrelationId(request);
   if (!isSameOriginRequest(request)) {
     return NextResponse.json(
       {
@@ -145,14 +158,33 @@ export async function POST(request: Request) {
     if (error instanceof PaymentClaimNotFoundError) {
       return genericFailure();
     }
-    return NextResponse.json(
-      {
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Something went wrong. Please try again.",
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({
+        boundary: "POST /api/member-payments/claims",
+        requestId,
+        error,
+      });
+      return withCorrelationId(
+        NextResponse.json(DATABASE_UNAVAILABLE_BODY, { status: 503 }),
+        requestId,
+      );
+    }
+    logUnexpectedError({
+      boundary: "POST /api/member-payments/claims",
+      requestId,
+      error,
+    });
+    return withCorrelationId(
+      NextResponse.json(
+        {
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Something went wrong. Please try again.",
+          },
         },
-      },
-      { status: 500 },
+        { status: 500 },
+      ),
+      requestId,
     );
   }
 }

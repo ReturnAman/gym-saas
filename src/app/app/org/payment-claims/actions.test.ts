@@ -88,6 +88,35 @@ describe("confirmClaimAction", () => {
     );
   });
 
+  it("forwards the form's idempotency token to the service (H4)", async () => {
+    await confirmClaimAction(
+      INITIAL_CLAIM_DECISION_STATE,
+      form({
+        claimId: "claim-1",
+        amount: "450",
+        idempotencyToken: "123e4567-e89b-42d3-a456-426614174000",
+      }),
+    );
+    expect(mockConfirmClaim).toHaveBeenCalledWith(STAFF_ID, "claim-1", {
+      amount: "450",
+      idempotencyKey: "123e4567-e89b-42d3-a456-426614174000",
+    });
+  });
+
+  it("maps an idempotency conflict to its own safe message (H4)", async () => {
+    const { PaymentClaimIdempotencyConflictError } =
+      await import("@/lib/server/payment-claims");
+    mockConfirmClaim.mockRejectedValue(
+      new PaymentClaimIdempotencyConflictError(),
+    );
+    const state = await confirmClaimAction(
+      INITIAL_CLAIM_DECISION_STATE,
+      form({ claimId: "claim-1", amount: "450" }),
+    );
+    expect(state.ok).toBe(false);
+    expect(state.message).toContain("already submitted with different details");
+  });
+
   it("revalidates only the fixed queue and members-list paths on success", async () => {
     await confirmClaimAction(
       INITIAL_CLAIM_DECISION_STATE,

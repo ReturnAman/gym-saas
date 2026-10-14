@@ -6,6 +6,7 @@ import {
   deriveMembershipPayments,
   deriveMembershipStatus,
   derivePaymentStatus,
+  PaymentValidationError,
   validatePaymentInput,
   type MembershipPlan,
   type MembershipStatus,
@@ -14,6 +15,7 @@ import {
   type PaymentStatus,
 } from "../members";
 import { getPrimaryMembership } from "./authorization";
+import { isValidIdempotencyKey } from "../idempotency";
 import {
   AUDIT_EVENT_PAYMENT_CLAIM_CONFIRMED,
   AUDIT_EVENT_PAYMENT_CLAIM_REJECTED,
@@ -94,6 +96,20 @@ export class PaymentClaimConflictError extends Error {
   constructor(message = "This claim has already been decided.") {
     super(message);
     this.name = "PaymentClaimConflictError";
+  }
+}
+
+/**
+ * Thrown when a claim-confirmation idempotency token was already used
+ * for a different operation (H4). Same token + same claim + same
+ * amount resolves to the original payment instead.
+ */
+export class PaymentClaimIdempotencyConflictError extends Error {
+  constructor(
+    message = "This confirmation was already used with different details.",
+  ) {
+    super(message);
+    this.name = "PaymentClaimIdempotencyConflictError";
   }
 }
 
@@ -598,11 +614,47 @@ async function findClaimInScope(organizationId: string, claimId: string) {
  * simply a partial payment — the balance keeps deriving from the
  * Payment rows alone).
  */
+interface ClaimPaymentRow {
+  id: string;
+  amount: Prisma.Decimal;
+  paymentClaimId: string | null;
+  idempotencyKey: string | null;
+}
+
+async function findPaymentByIdempotencyKey(
+  organizationId: string,
+  idempotencyKey: string,
+): Promise<ClaimPaymentRow | null> {
+  return db.payment.findUnique({
+    where: {
+      organizationId_idempotencyKey: { organizationId, idempotencyKey },
+    },
+    select: { id: true, amount: true, paymentClaimId: true, idempotencyKey: true },
+  });
+}
+
+/**
+ * Whether a stored payment is exactly the confirmation now being
+ * retried: it must be THIS claim's payment for the same effective
+ * amount. (Method and reference come from the claim itself, so they
+ * cannot differ for the same claim.)
+ */
+function isSameConfirmation(
+  existing: ClaimPaymentRow,
+  claimId: string,
+  confirmedAmountPaise: number,
+): boolean {
+  return (
+    existing.paymentClaimId === claimId &&
+    decimalToPaise(existing.amount) === confirmedAmountPaise
+  );
+}
+
 export async function confirmPaymentClaim(
   staffUserId: string,
   claimId: string,
-  input?: { amount?: string },
-): Promise<{ claimId: string; paymentId: string }> {
+  input?: { amount?: string; idempotencyKey?: string },
+): Promise<{ claimId: string; paymentId: string; deduplicated?: boolean }> {
   const scope = await requireVerifyScope(staffUserId);
   const claim = await findClaimInScope(scope.organizationId, claimId);
 
@@ -615,10 +667,31 @@ export async function confirmPaymentClaim(
       reference: claim.reference ?? "",
     }).amountPaise;
   }
+
+  const idempotencyKey = input?.idempotencyKey;
+  if (idempotencyKey !== undefined && !isValidIdempotencyKey(idempotencyKey)) {
+    throw new PaymentValidationError({
+      form: "This confirmation could not be verified. Refresh the page and try again.",
+    });
+  }
+
+  if (idempotencyKey) {
+    const existing = await findPaymentByIdempotencyKey(
+      scope.organizationId,
+      idempotencyKey,
+    );
+    if (existing) {
+      if (isSameConfirmation(existing, claim.id, confirmedAmountPaise)) {
+        return { claimId: claim.id, paymentId: existing.id, deduplicated: true };
+      }
+      throw new PaymentClaimIdempotencyConflictError();
+    }
+  }
+
   const now = new Date();
 
   try {
-    const paymentId = await db.$transaction(async (tx) => {
+    const result = await db.$transaction(async (tx) => {
       // Revalidate the verifier under lock before any mutation: a
       // demoted/removed actor must not decide, even mid-request.
       await revalidateVerifierInTransaction(tx, scope);
@@ -633,6 +706,31 @@ export async function confirmPaymentClaim(
         data: { status: "CONFIRMED", verifiedAt: now, verifiedBy: scope.userId },
       });
       if (transition.count === 0) {
+        if (idempotencyKey) {
+          // A racing submission carrying the same token may already
+          // have decided this claim: resolve to its payment when it is
+          // exactly this confirmation. A same-token payment for a
+          // different amount is an idempotency conflict; a decision by
+          // a different operation keeps the already-decided outcome.
+          const winner = await tx.payment.findFirst({
+            where: {
+              organizationId: scope.organizationId,
+              paymentClaimId: claim.id,
+            },
+            select: {
+              id: true,
+              amount: true,
+              paymentClaimId: true,
+              idempotencyKey: true,
+            },
+          });
+          if (winner && winner.idempotencyKey === idempotencyKey) {
+            if (isSameConfirmation(winner, claim.id, confirmedAmountPaise)) {
+              return { paymentId: winner.id, deduplicated: true as const };
+            }
+            throw new PaymentClaimIdempotencyConflictError();
+          }
+        }
         throw new PaymentClaimConflictError();
       }
 
@@ -648,6 +746,7 @@ export async function confirmPaymentClaim(
           confirmedAt: now,
           confirmedBy: scope.userId,
           paymentClaimId: claim.id,
+          idempotencyKey: idempotencyKey ?? null,
         },
         select: { id: true },
       });
@@ -682,13 +781,36 @@ export async function confirmPaymentClaim(
           paymentClaimId: claim.id,
         },
       });
-      return payment.id;
+      return { paymentId: payment.id, deduplicated: false as const };
     });
-    return { claimId: claim.id, paymentId };
+    return {
+      claimId: claim.id,
+      paymentId: result.paymentId,
+      ...(result.deduplicated ? { deduplicated: true } : {}),
+    };
   } catch (error) {
-    // The unique payment link fired (paranoid second lock): the claim
-    // already has its payment, which is the conflict outcome.
     if (isUniqueViolation(error)) {
+      if (idempotencyKey) {
+        // The token index fired: a concurrent operation with the same
+        // token committed first. Resolve to it when it is exactly this
+        // confirmation; otherwise it is an idempotency conflict.
+        const existing = await findPaymentByIdempotencyKey(
+          scope.organizationId,
+          idempotencyKey,
+        );
+        if (existing) {
+          if (isSameConfirmation(existing, claim.id, confirmedAmountPaise)) {
+            return {
+              claimId: claim.id,
+              paymentId: existing.id,
+              deduplicated: true,
+            };
+          }
+          throw new PaymentClaimIdempotencyConflictError();
+        }
+      }
+      // The unique payment link fired (paranoid second lock): the claim
+      // already has its payment, which is the conflict outcome.
       throw new PaymentClaimConflictError();
     }
     throw error;

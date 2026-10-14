@@ -3,10 +3,12 @@ import "server-only";
 import { Prisma, type Role } from "@prisma/client";
 
 import {
+  PaymentValidationError,
   validatePaymentInput,
   type PaymentInput,
   type PaymentMethod,
 } from "../members";
+import { isValidIdempotencyKey } from "../idempotency";
 import { getPrimaryMembership } from "./authorization";
 import { AUDIT_EVENT_PAYMENT_CONFIRMED, writeAuditEvent } from "./audit";
 import { db } from "./db";
@@ -47,6 +49,29 @@ export class PaymentNotFoundError extends Error {
     super(message);
     this.name = "PaymentNotFoundError";
   }
+}
+
+/**
+ * Thrown when an idempotency token was already used for a DIFFERENT
+ * payment operation (H4). Reusing a token with the same payload is a
+ * safe replay and resolves to the original payment instead; reusing
+ * it with a different payload is a client bug or a stale form, and is
+ * rejected without creating anything.
+ */
+export class PaymentIdempotencyConflictError extends Error {
+  constructor(
+    message = "This payment submission was already used with different details.",
+  ) {
+    super(message);
+    this.name = "PaymentIdempotencyConflictError";
+  }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
 }
 
 /** Roles allowed to record a confirmed payment in V1. */
@@ -195,6 +220,62 @@ export async function listPaymentsForMembership(
   }));
 }
 
+interface RecordedPaymentRow {
+  id: string;
+  memberId: string;
+  amount: Prisma.Decimal;
+  paymentMethod: PaymentMethod;
+  reference: string | null;
+  paymentClaimId: string | null;
+}
+
+async function findPaymentByIdempotencyKey(
+  organizationId: string,
+  idempotencyKey: string,
+): Promise<RecordedPaymentRow | null> {
+  return db.payment.findUnique({
+    where: {
+      organizationId_idempotencyKey: { organizationId, idempotencyKey },
+    },
+    select: {
+      id: true,
+      memberId: true,
+      amount: true,
+      paymentMethod: true,
+      reference: true,
+      paymentClaimId: true,
+    },
+  });
+}
+
+/**
+ * A replayed operation token resolves to the original payment — but
+ * only when the stored payment is exactly the operation being
+ * retried: same member, same amount, same method, same reference, and
+ * not a claim-confirmation payment. Anything else means the token was
+ * reused for a different operation, which is rejected.
+ */
+function resolveIdempotentReplay(
+  existing: RecordedPaymentRow,
+  expected: {
+    memberId: string;
+    amountPaise: number;
+    paymentMethod: PaymentMethod;
+    reference: string | null;
+  },
+): { paymentId: string; deduplicated: true } {
+  if (
+    existing.paymentClaimId !== null ||
+    existing.memberId !== expected.memberId ||
+    decimalToPaise(existing.amount) !== expected.amountPaise ||
+    existing.paymentMethod !== expected.paymentMethod ||
+    existing.reference !== expected.reference
+  ) {
+    throw new PaymentIdempotencyConflictError();
+  }
+  return { paymentId: existing.id, deduplicated: true };
+}
+
 /**
  * Record a confirmed payment against a member's current (latest)
  * membership.
@@ -205,12 +286,20 @@ export async function listPaymentsForMembership(
  * renew, extend, or reprice a membership. Overpayment is allowed: the paid
  * total stays the actual confirmed sum and the derived status is OVERPAID
  * with outstanding ₹0.
+ *
+ * Idempotency (H4): when the caller supplies an operation token, the
+ * database unique index on (organizationId, idempotencyKey) guarantees
+ * at most one payment per token. A replay with the same payload returns
+ * the original payment ({ deduplicated: true }) without writing a
+ * second payment or audit event; a replay with a different payload is
+ * rejected with PaymentIdempotencyConflictError.
  */
 export async function recordPayment(
   userId: string,
   memberId: string,
   input: PaymentInput,
-): Promise<{ paymentId: string }> {
+  options?: { idempotencyKey?: string },
+): Promise<{ paymentId: string; deduplicated?: boolean }> {
   const scope = await resolveScope(userId);
   if (!canRecordPayment(scope.role)) {
     throw new PaymentAuthorizationError(
@@ -219,6 +308,13 @@ export async function recordPayment(
   }
 
   const validated = validatePaymentInput(input);
+
+  const idempotencyKey = options?.idempotencyKey;
+  if (idempotencyKey !== undefined && !isValidIdempotencyKey(idempotencyKey)) {
+    throw new PaymentValidationError({
+      form: "This payment submission could not be verified. Refresh the page and try again.",
+    });
+  }
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -237,40 +333,74 @@ export async function recordPayment(
     throw new PaymentNotFoundError("This member has no membership to pay against.");
   }
 
-  const paymentId = await db.$transaction(async (tx) => {
-    // Revalidate the recorder under lock before any write: a
-    // demoted/removed actor must not record, even mid-request.
-    await revalidateRecorderInTransaction(tx, scope);
-    const payment = await tx.payment.create({
-      data: {
+  const expectedPayload = {
+    memberId: member.id,
+    amountPaise: validated.amountPaise,
+    paymentMethod: validated.paymentMethod,
+    reference: validated.reference,
+  };
+
+  if (idempotencyKey) {
+    const existing = await findPaymentByIdempotencyKey(
+      scope.organizationId,
+      idempotencyKey,
+    );
+    if (existing) return resolveIdempotentReplay(existing, expectedPayload);
+  }
+
+  let paymentId: string;
+  try {
+    paymentId = await db.$transaction(async (tx) => {
+      // Revalidate the recorder under lock before any write: a
+      // demoted/removed actor must not record, even mid-request.
+      await revalidateRecorderInTransaction(tx, scope);
+      const payment = await tx.payment.create({
+        data: {
+          organizationId: scope.organizationId,
+          memberId: member.id,
+          membershipId: membership.id,
+          // Exact Decimal from integer paise — no floating point.
+          amount: new Prisma.Decimal(validated.amountPaise).div(100),
+          paymentMethod: validated.paymentMethod,
+          reference: validated.reference,
+          confirmedAt: new Date(),
+          confirmedBy: scope.userId,
+          idempotencyKey: idempotencyKey ?? null,
+        },
+        select: { id: true },
+      });
+      await writeAuditEvent(tx, {
         organizationId: scope.organizationId,
-        memberId: member.id,
-        membershipId: membership.id,
-        // Exact Decimal from integer paise — no floating point.
-        amount: new Prisma.Decimal(validated.amountPaise).div(100),
-        paymentMethod: validated.paymentMethod,
-        reference: validated.reference,
-        confirmedAt: new Date(),
-        confirmedBy: scope.userId,
-      },
-      select: { id: true },
+        actorUserId: scope.userId,
+        event: AUDIT_EVENT_PAYMENT_CONFIRMED,
+        targetType: "Payment",
+        targetId: payment.id,
+        metadata: {
+          memberId: member.id,
+          membershipId: membership.id,
+          amountPaise: validated.amountPaise,
+          paymentMethod: validated.paymentMethod,
+          reference: validated.reference,
+        },
+      });
+      return payment.id;
     });
-    await writeAuditEvent(tx, {
-      organizationId: scope.organizationId,
-      actorUserId: scope.userId,
-      event: AUDIT_EVENT_PAYMENT_CONFIRMED,
-      targetType: "Payment",
-      targetId: payment.id,
-      metadata: {
-        memberId: member.id,
-        membershipId: membership.id,
-        amountPaise: validated.amountPaise,
-        paymentMethod: validated.paymentMethod,
-        reference: validated.reference,
-      },
-    });
-    return payment.id;
-  });
+  } catch (error) {
+    // A concurrent submission with the same token won the race: the
+    // unique index rejected this transaction's insert. Resolve to the
+    // winner when it is the same operation; a different payload (or an
+    // unrelated unique failure with no stored token row) keeps its
+    // error. This is a read-only resolution — the write is never
+    // blindly retried.
+    if (idempotencyKey && isUniqueViolation(error)) {
+      const existing = await findPaymentByIdempotencyKey(
+        scope.organizationId,
+        idempotencyKey,
+      );
+      if (existing) return resolveIdempotentReplay(existing, expectedPayload);
+    }
+    throw error;
+  }
 
   return { paymentId };
 }

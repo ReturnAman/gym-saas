@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 
 import { formatKolkataDateTime } from "@/lib/attendance";
+import { newIdempotencyToken } from "@/lib/idempotency";
 import {
   PAYMENT_METHOD_LABELS,
   PLAN_LABELS,
@@ -59,6 +60,11 @@ function ClaimCard({ claim }: { claim: ClaimReviewRow }) {
     INITIAL_CLAIM_DECISION_STATE,
   );
   const [rejectArmed, setRejectArmed] = useState(false);
+  // One idempotency token per confirmation operation (H4): minted when
+  // this claim's card mounts and resubmitted unchanged on retry, so a
+  // double-click or a retry after a lost response resolves to the
+  // original confirmation payment instead of conflicting or doubling.
+  const [confirmToken] = useState(() => newIdempotencyToken());
   const busy = confirmPending || rejectPending;
   const amountFieldId = `confirm-amount-${claim.id}`;
 
@@ -84,6 +90,7 @@ function ClaimCard({ claim }: { claim: ClaimReviewRow }) {
 
       <form action={confirmAction} className={styles.form}>
         <input type="hidden" name="claimId" value={claim.id} />
+        <input type="hidden" name="idempotencyToken" value={confirmToken} />
         <div className={styles.field}>
           <label htmlFor={amountFieldId}>Amount actually received (₹)</label>
           <input

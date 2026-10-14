@@ -5,8 +5,17 @@ import { revalidatePath } from "next/cache";
 import { PaymentValidationError } from "@/lib/members";
 import { requireCurrentUser } from "@/lib/server/auth";
 import {
+  classifyDatabaseError,
+  mayHaveCommitted,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
+import {
   PaymentClaimAuthorizationError,
   PaymentClaimConflictError,
+  PaymentClaimIdempotencyConflictError,
   PaymentClaimNotFoundError,
   confirmPaymentClaim,
   rejectPaymentClaim,
@@ -72,6 +81,39 @@ function mapDecisionError(error: unknown): ClaimDecisionState {
   ) {
     return noLongerAvailable();
   }
+  if (error instanceof PaymentClaimIdempotencyConflictError) {
+    revalidateClaimSurfaces();
+    return {
+      ok: false,
+      message:
+        "This confirmation was already submitted with different details. The list has been refreshed — check the claim's current status.",
+      errors: {},
+    };
+  }
+  if (mayHaveCommitted(error)) {
+    logDatabaseFailure({ boundary: "action:claimDecision", error });
+    // Confirming a claim creates a payment: a lost connection may mean
+    // the decision (and its payment) committed anyway. Refresh the
+    // queue and send the staff member to the claim's persisted status
+    // rather than inviting a blind second decision.
+    revalidateClaimSurfaces();
+    return {
+      ok: false,
+      message:
+        "We couldn't confirm whether this decision was saved — the database connection was interrupted. The list has been refreshed; check the claim's status before deciding again.",
+      errors: {},
+    };
+  }
+  if (classifyDatabaseError(error)) {
+    logDatabaseFailure({ boundary: "action:claimDecision", error });
+    return {
+      ok: false,
+      message:
+        "The database didn't respond in time, so this decision was not saved. Please try again.",
+      errors: {},
+    };
+  }
+  logUnexpectedError({ boundary: "action:claimDecision", error });
   // Unknown failures get a generic message — never leak internals.
   return {
     ok: false,
@@ -97,10 +139,15 @@ export async function confirmClaimAction(
     return noLongerAvailable();
   }
   try {
+    const idempotencyToken = String(formData.get("idempotencyToken") ?? "");
+    const input = {
+      ...(amount === "" ? {} : { amount }),
+      ...(idempotencyToken ? { idempotencyKey: idempotencyToken } : {}),
+    };
     await confirmPaymentClaim(
       user.id,
       claimId,
-      amount === "" ? undefined : { amount },
+      Object.keys(input).length > 0 ? input : undefined,
     );
   } catch (error) {
     return mapDecisionError(error);

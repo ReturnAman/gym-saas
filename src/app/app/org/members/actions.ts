@@ -14,9 +14,19 @@ import {
 } from "@/lib/server/members";
 import {
   PaymentAuthorizationError,
+  PaymentIdempotencyConflictError,
   PaymentNotFoundError,
   recordPayment,
 } from "@/lib/server/payments";
+import {
+  classifyDatabaseError,
+  DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+  mayHaveCommitted,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
 import {
   MemberValidationError,
   PaymentValidationError,
@@ -96,8 +106,15 @@ export async function createMemberAction(
         duplicates: [],
       };
     }
-    // Unknown failures (e.g. database errors) get a generic message —
-    // never leak internals to the user.
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+        duplicates: [],
+      };
+    }
+    // Unknown failures get a generic message — never leak internals.
     return {
       ok: false,
       message: "Could not add the member. Please try again.",
@@ -156,6 +173,14 @@ export async function updateMemberAction(
         duplicates: [],
       };
     }
+    if (classifyDatabaseError(error)) {
+      return {
+        ok: false,
+        message: DATABASE_TEMPORARILY_UNAVAILABLE_MESSAGE,
+        errors: {},
+        duplicates: [],
+      };
+    }
     return {
       ok: false,
       message: "Could not save the member. Please try again.",
@@ -200,14 +225,28 @@ export async function recordPaymentAction(
   const memberId = String(formData.get("memberId") ?? "");
 
   try {
-    await recordPayment(user.id, memberId, {
-      amount: String(formData.get("amount") ?? ""),
-      paymentMethod: String(formData.get("paymentMethod") ?? ""),
-      reference: String(formData.get("reference") ?? ""),
-    });
+    const idempotencyToken = String(formData.get("idempotencyToken") ?? "");
+    await recordPayment(
+      user.id,
+      memberId,
+      {
+        amount: String(formData.get("amount") ?? ""),
+        paymentMethod: String(formData.get("paymentMethod") ?? ""),
+        reference: String(formData.get("reference") ?? ""),
+      },
+      idempotencyToken ? { idempotencyKey: idempotencyToken } : undefined,
+    );
   } catch (error) {
     if (error instanceof PaymentValidationError) {
       return { ok: false, message: null, errors: error.errors };
+    }
+    if (error instanceof PaymentIdempotencyConflictError) {
+      return {
+        ok: false,
+        message:
+          "This payment submission was already used with different details. Refresh the page and check the payment history before recording again.",
+        errors: {},
+      };
     }
     if (
       error instanceof PaymentAuthorizationError ||
@@ -215,8 +254,35 @@ export async function recordPaymentAction(
     ) {
       return { ok: false, message: error.message, errors: {} };
     }
-    // Unknown failures (e.g. database errors) get a generic message —
-    // never leak internals to the user.
+    if (mayHaveCommitted(error)) {
+      logDatabaseFailure({ boundary: "action:recordPayment", error });
+      // The connection died around the write: the payment may or may
+      // not be recorded — never invite a blind retry. Refresh the
+      // member's pages so the history and balance the staff member is
+      // sent to check are the persisted ones.
+      revalidatePath("/app/org/members");
+      revalidatePath(`/app/org/members/${memberId}`);
+      return {
+        ok: false,
+        message:
+          "We couldn't confirm whether this payment was recorded — the database connection was interrupted. Please check the member's payment history and balance before recording it again.",
+        errors: {},
+      };
+    }
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({ boundary: "action:recordPayment", error });
+      // Pool-acquisition or statement timeout: the transaction never
+      // started or was aborted by the database — nothing was recorded,
+      // so a plain retry is safe.
+      return {
+        ok: false,
+        message:
+          "The database didn't respond in time, so this payment was not recorded. Please try again.",
+        errors: {},
+      };
+    }
+    logUnexpectedError({ boundary: "action:recordPayment", error });
+    // Unknown failures get a generic message — never leak internals.
     return {
       ok: false,
       message: "Could not record the payment. Please try again.",

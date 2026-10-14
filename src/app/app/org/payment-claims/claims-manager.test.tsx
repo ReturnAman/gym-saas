@@ -130,6 +130,18 @@ describe("ClaimsManager", () => {
     expect(text).not.toContain("member-secret-id");
   });
 
+  it("the confirm form carries a stable idempotency token (H4)", async () => {
+    await render();
+    const tokens = container.querySelectorAll<HTMLInputElement>(
+      'input[name="idempotencyToken"]',
+    );
+    // Exactly one token: on the payment-creating confirm form only —
+    // the reject form creates no payment and carries none.
+    expect(tokens).toHaveLength(1);
+    expect(tokens[0]?.type).toBe("hidden");
+    expect(tokens[0]?.value).toMatch(/^[A-Za-z0-9][A-Za-z0-9_-]{15,63}$/);
+  });
+
   it("labels the amount field and defaults it to the claimed amount", async () => {
     await render();
     const label = container.querySelector('label[for^="confirm-amount-"]');

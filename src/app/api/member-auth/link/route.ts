@@ -1,5 +1,17 @@
 import { NextResponse } from "next/server";
 
+import {
+  resolveCorrelationId,
+  withCorrelationId,
+} from "@/lib/server/correlation";
+import {
+  classifyDatabaseError,
+  DATABASE_UNAVAILABLE_BODY,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
 import { linkMember } from "@/lib/server/member-auth";
 import { MemberLinkingError } from "@/lib/server/member-linking";
 import {
@@ -20,6 +32,7 @@ import {
  * indistinguishable.
  */
 export async function POST(request: Request) {
+  const requestId = resolveCorrelationId(request);
   if (!isSameOriginRequest(request)) {
     return genericFailure();
   }
@@ -51,14 +64,33 @@ export async function POST(request: Request) {
     if (error instanceof MemberLinkingError) {
       return genericFailure();
     }
-    return NextResponse.json(
-      {
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "Something went wrong. Please try again.",
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({
+        boundary: "POST /api/member-auth/link",
+        requestId,
+        error,
+      });
+      return withCorrelationId(
+        NextResponse.json(DATABASE_UNAVAILABLE_BODY, { status: 503 }),
+        requestId,
+      );
+    }
+    logUnexpectedError({
+      boundary: "POST /api/member-auth/link",
+      requestId,
+      error,
+    });
+    return withCorrelationId(
+      NextResponse.json(
+        {
+          error: {
+            code: "INTERNAL_ERROR",
+            message: "Something went wrong. Please try again.",
+          },
         },
-      },
-      { status: 500 },
+        { status: 500 },
+      ),
+      requestId,
     );
   }
 }

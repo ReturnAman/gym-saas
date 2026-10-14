@@ -319,6 +319,17 @@ model Payment {
   // @@unique([organizationId, paymentClaimId]) below makes the link
   // one-to-one: one claim can produce at most one confirmed payment.
   paymentClaimId String?       @map("payment_claim_id")
+  // Client-generated idempotency token for the operation that created
+  // this payment (H4): a form renders one token per intentional
+  // operation and resubmits the SAME token on retry, so a double-click,
+  // a concurrent duplicate, or a retry after a lost response resolves
+  // to this row instead of creating a second payment. Nullable —
+  // payments recorded before tokens existed (and any non-UI caller)
+  // carry none, and PostgreSQL treats NULLs as distinct under the
+  // unique index below, so keyless payments never collide.
+  // @@unique([organizationId, idempotencyKey]) binds the token to one
+  // gym: the same token in another organization is a different payment.
+  idempotencyKey String?       @map("idempotency_key")
   createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -329,6 +340,7 @@ model Payment {
   paymentClaim    PaymentClaim? @relation(fields: [organizationId, paymentClaimId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, paymentClaimId])
+  @@unique([organizationId, idempotencyKey])
   @@index([organizationId])
   @@index([memberId])
   @@index([membershipId])

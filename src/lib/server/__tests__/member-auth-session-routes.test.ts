@@ -128,4 +128,26 @@ describe("POST /api/member-auth/logout", () => {
     expect(response.status).toBe(403);
     expect(mockRevoke).not.toHaveBeenCalled();
   });
+
+  it("on a database failure: clears the cookie but does not claim revocation (H2)", async () => {
+    const { Prisma } = await import("@prisma/client");
+    mockReadToken.mockResolvedValue(RAW_TOKEN);
+    mockRevoke.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError("Can't reach database server", {
+        code: "P1001",
+        clientVersion: "7.10.0",
+      }),
+    );
+    const response = await logoutPOST(
+      new Request("https://gym.example.com/api/member-auth/logout", {
+        method: "POST",
+        headers: { host: "gym.example.com" },
+      }),
+    );
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body.error.code).toBe("DATABASE_UNAVAILABLE");
+    expect(body.loggedOut).toBeUndefined();
+    expect(mockClearCookie).toHaveBeenCalled();
+  });
 });

@@ -1,1100 +1,260 @@
-
 # 20 — CURRENT STATE
 
-**Project:** gym-saas  
-**Product:** TBD  
-**Parent Company:** XYZ  
-**Version:** 0.2  
-**Status:** Implementation foundations established; product UX definition in progress  
-**Last Updated:** 2026-10-01
+**Project:** gym-saas
+**Version:** 0.3 (draft — pending owner approval)
+**Status:** Core feature set implemented and merged to main; not deployed and not ready for public launch.
+**Last Updated:** 2026-10-14
+**Baseline:** `main` @ `57796bd10ef9d42572edba709c8b10d14be34f5a`
+**Latest CI:** run `38447698232` — SUCCESS (build, db-tests, e2e-auth)
+
+> This draft replaces the 2026-10-01 snapshot, which predates member
+> management, payments, member OTP/sessions, attendance, staff
+> management, and payment claims. Status words used below:
+> **Completed** = implemented, tested, and merged to `main`;
+> **Unverified** = code exists but the external integration has never
+> run live; **Not started** = no implementation exists. Nothing in
+> this document claims a deployment, backup, or provider integration
+> that has not actually been exercised.
 
 ---
 
 # 1. Purpose
 
-This document records the current implementation and decision state of the gym-saas project.
-
-It is the operational snapshot of the repository.
-
-AI tools and developers should read this document before starting meaningful work so they understand:
-
-- what has already been decided
-- what has been implemented
-- what remains open
-- what is currently being worked on
-- what must not be changed without approval
-- what the next engineering step is
-
-This document should remain concise and current.
-
-It is not a replacement for detailed architecture, security, product, database, or API documentation.
-
----
-
-# 2. Current Project Status
-
-## 2.1 Overall Status
-
-The project has moved beyond pure documentation:
-
-> **Engineering foundations implemented; product UX definition in progress**
-
-Implemented foundations (see change log, section 39):
-
-- Application foundation: Next.js 16 + TypeScript strict, Prisma 7 +
-  PostgreSQL configuration, server-only env validation, Prisma client
-  singleton, `GET /api/health`, Vitest + Playwright smoke tests, ESLint,
-  CI workflow.
-- Clerk authentication foundation: application `User` model, idempotent
-  Clerk→User sync, protected `/app` route, `/sign-in` page.
-- Organization and owner onboarding: `Organization` + `OrganizationMembership`
-  models, owner onboarding flow creating the organization with the creator
-  as OWNER.
-- Gym profile and owner settings: editable gym profile fields
-  (`/app/org/settings`), OWNER-only writes enforced server-side.
-- Member Management V1 foundation (in working tree, uncommitted): `Member`
-  + `Membership` models with migration, fixed four-plan V1 enum, calendar-
-  month expiry derivation, exact-Decimal fee with paid ₹0 / outstanding = fee
-  for new memberships; server-side validation, tenant isolation, and
-  role-based authorization (OWNER/ADMIN/STAFF manage; TRAINER view;
-  MEMBER own-only); routes `/app/org/members`, `/new`, `/[id]`,
-  `/[id]/edit` with search, filters, pagination, live membership summary,
-  duplicate-phone surfacing, and loading/empty/no-results/error states.
-- Prisma/PostgreSQL setup with migrations, naming conventions, and CI
-  validation (`prisma validate`, `prisma generate`).
-
-Not yet implemented: import/WhatsApp migration, payment claims/verification,
-attendance, dashboard, staff management, announcements, notifications,
-production deployment. See section 34.
-
----
-
-# 3. Documentation Status
-
-| Document | Status |
-|---|---|
-| `AI_CONTEXT.md` | Complete |
-| `AGENTS.md` | Complete |
-| `00-PROJECT-CHARTER.md` | Complete |
-| `01-PRODUCT-REQUIREMENTS.md` | Complete |
-| `02-USER-FLOWS.md` | Complete |
-| `03-SYSTEM-ARCHITECTURE.md` | Complete |
-| `04-DATABASE-DESIGN.md` | Complete |
-| `05-AUTHORIZATION.md` | Complete |
-| `06-SECURITY.md` | Complete |
-| `07-API-SPECIFICATION.md` | Complete |
-| `08-PWA.md` | Complete |
-| `09-TESTING.md` | Complete |
-| `10-DEVOPS.md` | Complete |
-| `11-OBSERVABILITY.md` | Complete |
-| `12-SCALABILITY.md` | Complete |
-| `13-COST-INFRASTRUCTURE.md` | Complete |
-| `14-TECH-DECISIONS.md` | Complete |
-| `15-DSA-AND-ENGINEERING.md` | Complete |
-| `16-INTERVIEW-MASTER.md` | Complete |
-| `17-PRODUCT-UX-SPEC.md` | Complete |
-| `20-CURRENT-STATE.md` | Current document |
-
----
-
-# 4. Product State
-
-## 4.1 Product Direction
-
-The first product is a gym management SaaS for small local gyms.
-
-The primary paying customer is:
-
-> Gym owner / gym operator
-
-The primary daily end user is:
-
-> Gym member
-
-The product is intended to provide useful operational software to gyms while also creating a strong real-world software engineering project.
-
----
-
-# 5. Core Product Scope
-
-## 5.1 Owner Core
-
-Planned V1 capabilities:
-
-- Gym profile and settings
-- Member management
-- Membership management
-- Payment tracking
-- Payment verification
-- Partial payments
-- Attendance
-- QR attendance
-- Staff management
-- Roles and permissions
-- Dashboard
-- Needs Attention
-- Announcements
-- CSV exports
-- Basic occupancy information
-
----
-
-## 5.2 Member Core
-
-Planned V1 capabilities:
-
-- OTP onboarding
-- Gym QR-based entry
-- Member home
-- Check-in
-- Attendance history
-- Attendance percentage
-- Membership status
-- Payment status
-- Renewal information
-- Announcements
-- Live occupancy
-
----
-
-# 6. Future Product Scope
-
-Potential future capabilities include:
-
-- Attendance streaks
-- Badges
-- Consistency leaderboard
-- Daily challenges
-- Goals
-- Achievement system
-- Progress photos
-- Gym-controlled challenges
-- Partner offers
-- Gym discovery
-- Affiliate/commission functionality
-- Additional engagement features
-
-These are not required for initial implementation.
-
----
-
-# 7. Architecture State
-
-## 7.1 Application Architecture
-
-Current architectural direction:
-
-> Modular monolith
-
-The initial system should not be split into microservices without a demonstrated need.
-
-Business/domain logic should remain separated from presentation concerns.
-
----
-
-## 7.2 Multi-Tenancy
-
-Multi-tenancy is a core architectural requirement.
-
-Each gym is represented as an organization/tenant.
-
-The system must enforce tenant isolation on the backend.
-
-Frontend organization checks are not considered a security boundary.
-
----
-
-# 8. Technology Direction
-
-Current technology direction:
-
-### Frontend
-
-- Next.js
-- React
-- TypeScript
-- PWA
-
-### Backend
-
-- Next.js server-side/API capabilities initially
-- Domain/business logic separated from UI
-
-### Database
-
-- PostgreSQL
-
-### Authentication
-
-- Clerk is the selected authentication provider (Accepted 2026-09-29; see `docs/decisions/001-AUTHENTICATION.md`)
-- Clerk is responsible for authentication/identity only; authorization, organization membership, roles, and tenant isolation remain application-owned
-
-### Authorization
-
-Application-owned authorization.
-
-Authentication and authorization remain separate concepts.
-
-### ORM
-
-Decided (2026-09-29): Prisma. See `docs/decisions/002-DATABASE-ORM.md` (Accepted).
-
----
-
-# 9. Identity and Authentication State
-
-## 9.1 User Identity
-
-A user is an application-level identity.
-
-Phone number is not the primary key.
-
-A single user may belong to multiple organizations.
-
----
-
-## 9.2 Member Authentication
-
-Planned flow:
-
-```text
-Permanent Gym QR
-        ↓
-Identify Gym
-        ↓
-Enter Phone
-        ↓
-Check Gym Membership Association
-        ↓
-Send OTP
-        ↓
-Verify OTP
-        ↓
-Create / Link User
-        ↓
-Create / Confirm Organization Membership
-        ↓
-Access Gym
-````
-
-The QR code identifies the gym.
-
-It does not authenticate the member.
-
-OTP verification proves control of the phone number.
-
-Authorization comes from organization membership and role.
-
----
-
-## 9.3 Owner Authentication
-
-Planned flow:
-
-```text
-Phone
- ↓
-OTP
- ↓
-User Account
- ↓
-Minimal Gym Details
- ↓
-Organization
- ↓
-OWNER Membership
- ↓
-Trial Subscription
-```
-
-Phone OTP does not by itself prove legal ownership of a gym.
-
----
-
-# 10. Authorization State
-
-Initial roles:
-
-* OWNER
-* ADMIN
-* STAFF
-* TRAINER
-* MEMBER
-
-Authorization must be enforced server-side.
-
-Every protected operation should consider:
-
-1. Is the user authenticated?
-2. Which organization are they acting in?
-3. What role do they have?
-4. Do they have permission for this action?
-5. Does the requested resource belong to the organization?
-6. Is the requested state transition valid?
-
----
-
-# 11. Subscription State
-
-Initial owner trial:
-
-> 7-day free trial
-
-The exact initial member limit may remain configurable.
-
-Trial expiration should not delete organization data.
-
-Subscription state and organization state remain separate.
-
-The planned entitlement model is:
-
-```text
-Subscription
-     ↓
-Plan
-     ↓
-Entitlements
-     ↓
-Feature / Action Checks
-```
-
-Avoid scattering direct checks such as:
-
-```text
-if trial
-```
-
-throughout the application.
-
----
-
-# 12. SaaS Subscription Payment State
-
-For V1:
-
-> No Razorpay integration.
-
-Gym owners pay the SaaS manually through supported payment methods such as:
-
-* UPI
-* Bank transfer
-
-Payment is manually verified.
-
-The subscription is then manually enabled or extended.
-
-A future payment gateway can be added later if justified.
-
----
-
-# 13. Member Payment State
-
-The SaaS does not hold gym membership money.
-
-The member pays the gym directly.
-
-Possible methods:
-
-* UPI
-* Cash
-* Card
-* Other configured methods
-
-The product records the gym's payment state.
-
----
-
-## 13.1 Payment Claim
-
-Member flow:
-
-```text
-View Amount Due
-      ↓
-View Gym UPI / QR
-      ↓
-Pay Gym
-      ↓
-"I Have Paid"
-      ↓
-Payment Claim
-      ↓
-Owner / Authorized Staff Verification
-      ↓
-Confirmed Payment
-```
-
-A payment claim is not a confirmed payment.
-
----
-
-## 13.2 Partial Payments
-
-Partial payments are supported.
-
-Outstanding balance is calculated from actual confirmed payments.
-
-Conceptually:
-
-```text
-Outstanding
-=
-Charge Total
--
-Sum(Confirmed Payments)
-```
-
-Payment status may include:
-
-* UNPAID
-* PARTIALLY_PAID
-* PAID
-* OVERPAID
-
-Payment and membership renewal remain separate domains.
-
----
-
-# 14. Attendance State
-
-Attendance is a core V1 feature.
-
-Planned capabilities:
-
-* QR check-in
-* Check-in records
-* Duplicate protection
-* Attendance history
-* Attendance percentage
-* Active attendance sessions
-* Occupancy calculation
-
----
-
-# 15. Occupancy State
-
-Live occupancy should be derived from active attendance/check-in sessions.
-
-The system should avoid maintaining unnecessary duplicate occupancy state when it can be derived reliably.
-
-Future occupancy analytics may include:
-
-* historical occupancy
-* peak hours
-* occupancy trends
-
----
-
-# 16. WhatsApp State
-
-The planned production direction is:
-
-> Centralized SaaS WhatsApp sender
-
-The SaaS should not require every gym owner to manually configure their own WhatsApp infrastructure for the core notification system.
-
-Messages remain personalized.
-
-Example:
-
-```text
-Member Name
-Gym Name
-Amount
-Membership Expiry
-Reminder Type
-```
-
-Notification records must remain tenant-scoped.
-
----
-
-## 16.1 Notification Architecture
-
-Planned flow:
-
-```text
-Event
- ↓
-Notification Rule
- ↓
-Notification Job
- ↓
-Queue
- ↓
-Provider
- ↓
-Delivery Status
-```
-
-The notification provider should be replaceable.
-
-WhatsApp must not be used as the authentication system.
-
----
-
-## 16.2 OpenWA
-
-OpenWA may be useful for experimentation or controlled pilot testing.
-
-It is not the production foundation for the commercial SaaS.
-
-Production WhatsApp direction should use an appropriate official provider.
-
----
-
-# 17. PWA State
-
-The member and owner experiences are intended to work primarily as a Progressive Web App.
-
-Initial goals:
-
-* Installable
-* Mobile-friendly
-* Responsive
-* Fast
-* Good offline/error behavior
-* QR-friendly
-* App-like navigation
-
-Native Android/iOS applications are not required for V1.
-
----
-
-# 18. Security State
-
-Security is a first-class requirement.
-
-Important protected areas include:
-
-* Authentication
-* Authorization
-* Tenant isolation
-* OTP
-* Payment state
-* Member data
-* Staff permissions
-* QR flows
-* API access
-* Secrets
-* Logs
-* File uploads
-* Notification data
-
-The frontend must never be treated as a security boundary.
-
----
-
-# 19. Database State
-
-Database direction:
-
-> PostgreSQL
-
-Database design must support:
-
-* Multi-tenancy
-* Users
-* Organization memberships
-* Roles
-* Members
-* Memberships
-* Plans
-* Charges
-* Payments
-* Payment claims
-* Attendance
-* Attendance sessions
-* Announcements
-* Notifications
-* Subscriptions
-* Entitlements
-* Audit information
-
-Schema changes must use deliberate migrations.
-
-Manual production schema modifications should be avoided.
-
----
-
-# 20. API State
-
-The API should:
-
-* Authenticate requests
-* Authorize requests
-* Validate input
-* Enforce tenant scope
-* Validate resource ownership
-* Enforce business rules
-* Protect sensitive information
-* Return predictable errors
-
-The client must not be trusted to provide authoritative business state.
-
----
-
-# 21. Testing State
-
-Testing should cover at minimum:
-
-### Authentication
-
-* OTP expiration
-* OTP attempts
-* OTP cooldown
-* OTP abuse protection
-* Authentication failures
-
-### Authorization
-
-* Role restrictions
-* Tenant isolation
-* Resource ownership
-* IDOR-style access attempts
-
-### Payments
-
-* Payment claims
-* Payment confirmation
-* Partial payments
-* Outstanding balance
-* Unauthorized confirmation
-* Invalid payment amounts
-* Payment state transitions
-
-### Attendance
-
-* Check-in
-* Duplicate check-in
-* Tenant isolation
-* Attendance history
-* Occupancy calculations
-
-### General
-
-* Unit tests
-* Integration tests
-* API tests
-* End-to-end tests where valuable
-
----
-
-# 22. DevOps State
-
-The repository already has GitHub Actions/CI foundations.
-
-The engineering workflow should use:
-
-```text
-Issue
- ↓
-Implementation
- ↓
-Tests
- ↓
-Validation
- ↓
-Commit
- ↓
-Pull Request
- ↓
-Review
- ↓
-Merge
-```
-
-Production infrastructure should not be created prematurely.
-
----
-
-# 23. Secrets State
-
-Secrets must never be committed to Git.
-
-Examples include:
-
-* API keys
-* Database credentials
-* WhatsApp credentials
-* Cloud credentials
-* OAuth secrets
-* Private tokens
-* Production environment secrets
-
-Use environment variables and appropriate secret-management mechanisms.
-
-`.env.example` may contain variable names but never real secrets.
-
----
-
-# 24. Observability State
-
-The system should eventually provide:
-
-* Structured logs
-* Error tracking
-* Health checks
-* Request tracing where useful
-* Notification delivery visibility
-* Audit information for sensitive actions
-
-Error tracking provider remains an open implementation decision.
-
----
-
-# 25. Infrastructure State
-
-The GitHub Student Developer Pack provides useful infrastructure benefits.
-
-Potential resources include:
-
-* Azure student credit
-* MongoDB Atlas credits
-* Heroku credit
-* GitHub Pro
-* GitHub Copilot
-* Codespaces
-* Other student benefits
-
-These benefits should be used when they fit the architecture.
-
-They should not drive architecture decisions merely because they are available.
-
----
-
-# 26. Cost Philosophy
-
-Initial goal:
-
-> Minimize personal spending while building a real product.
-
-Target initial personal infrastructure spend:
-
-> Approximately ₹0–₹1,000/month where practical.
-
-The architecture should allow the product to grow from low-cost development infrastructure toward paid production infrastructure without requiring unnecessary rewrites.
-
-Paying customers should eventually fund production infrastructure.
-
----
-
-# 27. Domain / Branding State
-
-Final product name:
-
-> TBD
-
-Parent company:
-
-> XYZ
-
-Product brands are intended to be owned by the parent company.
-
-Domain purchase should happen after the product/brand direction is sufficiently validated and before serious external pilot usage.
-
-Do not purchase multiple domains prematurely.
-
----
-
-# 28. Current Open Decisions
-
-The following decisions remain open unless explicitly changed elsewhere:
-
-* Final product name
-* Final domain
-* Production hosting
-* Production PostgreSQL provider
-* Error tracking provider
-* Final API conventions
-* API versioning strategy
-* File storage provider
-* Infrastructure-as-code approach
-* Production WhatsApp provider
-* Final notification provider configuration
-* Exact pricing/plans
-* Exact trial member limit
-* Final entitlement matrix
-
-Open decisions must not be silently finalized by AI tools.
-
----
-
-# 29. Decisions Requiring Human Approval
-
-Human approval is required before changing:
-
-* Core architecture
-* Database technology
-* Authentication architecture
-* Authorization model
-* Tenant isolation model
-* Payment architecture
-* Payment gateway
-* Production infrastructure
-* Major third-party services
-* Microservice architecture
-* Security architecture
-* Destructive database changes
-
-AI tools may propose changes but must not silently make these decisions.
-
----
-
-# 30. Current Engineering Rule
-
-The project should not jump directly into building the entire SaaS.
-
-Implementation should proceed incrementally.
-
-Preferred workflow:
-
-```text
-Requirement
-    ↓
-Security Analysis
-    ↓
-Architecture / Data Impact
-    ↓
-Implementation Plan
-    ↓
-Human Approval if Required
-    ↓
-Implementation
-    ↓
-Tests
-    ↓
-Validation
-    ↓
-Diff Review
-    ↓
-Documentation Update
-    ↓
-Current-State Update
-```
-
----
-
-# 31. Current Development Philosophy
-
-The developer is the engineer and architect.
-
-AI tools are:
-
-* implementation assistants
-* reviewers
-* debugging assistants
-* learning assistants
-* documentation assistants
-* research assistants
-
-AI must not become the unquestioned source of architectural decisions.
-
-The repository remains the source of truth.
-
----
-
-# 32. Git Strategy
-
-Prefer small, focused commits.
-
-Examples:
-
-```text
-docs: define member onboarding flow
-docs: define payment architecture
-docs: define authorization model
-feat: add organization model
-feat: add member creation flow
-test: add tenant isolation coverage
-fix: prevent duplicate attendance check-in
-```
-
-Avoid giant commits such as:
-
-```text
-build entire gym SaaS
-```
-
----
-
-# 33. Current Repository State
-
-Expected repository structure:
-
-```text
-gym-saas/
-├── README.md
-├── AI_CONTEXT.md
-├── AGENTS.md
-├── CHANGELOG.md
-│
-├── docs/
-│   ├── 00-PROJECT-CHARTER.md
-│   ├── 01-PRODUCT-REQUIREMENTS.md
-│   ├── 02-USER-FLOWS.md
-│   ├── 03-SYSTEM-ARCHITECTURE.md
-│   ├── 04-DATABASE-DESIGN.md
-│   ├── 05-AUTHORIZATION.md
-│   ├── 06-SECURITY.md
-│   ├── 07-API-SPECIFICATION.md
-│   ├── 08-PWA.md
-│   ├── 09-TESTING.md
-│   ├── 10-DEVOPS.md
-│   ├── 11-OBSERVABILITY.md
-│   ├── 12-SCALABILITY.md
-│   ├── 13-COST-INFRASTRUCTURE.md
-│   ├── 14-TECH-DECISIONS.md
-│   ├── 15-DSA-AND-ENGINEERING.md
-│   ├── 16-INTERVIEW-MASTER.md
-│   ├── 17-PRODUCT-UX-SPEC.md
-│   ├── 20-CURRENT-STATE.md
-│   │
-│   ├── features/
-│   ├── decisions/
-│   └── learning/
-│
-├── design/
-├── src/
-├── tests/
-├── scripts/
-│
-└── .github/
-    ├── workflows/
-    ├── ISSUE_TEMPLATE/
-    └── pull_request_template.md
-```
-
----
-
-# 34. What Has Not Started Yet
-
-Unless separately recorded:
-
-* Production database
-* Production authentication
-* Production deployment
-* Production WhatsApp integration
-* Payment gateway
-* Production domain
-* Full application implementation
-* Production monitoring
-* Real customer onboarding
-
-These should be introduced deliberately.
-
----
-
-# 35. Immediate Next Phase
-
-The immediate product/engineering direction is:
-
-```text
-Product UX definition
-    ↓
-Approved screen design
-    ↓
-Vertical feature implementation
-    ↓
-Local product validation
-    ↓
-GitHub verification
-```
-
-Implementation proceeds one vertical slice at a time (member management is
-the next candidate feature area), each following the workflow in section 30.
-No feature work begins until its UX is defined and its screen design is
-approved.
-
----
-
-# 36. First Implementation Principle
-
-Do not begin by building the dashboard UI.
-
-The foundation should establish:
-
-```text
-Identity
-   ↓
-Organization
-   ↓
-Membership
-   ↓
-Authorization
-   ↓
-Domain Data
-   ↓
-Business Operations
-   ↓
-UI
-```
-
-This reduces the risk of building UI around incorrect authorization or data assumptions.
-
----
-
-# 37. Current Priority
-
-The immediate priority is:
-
-> Define the product UX (`17-PRODUCT-UX-SPEC.md`), get screen designs
-> approved, then implement the next vertical feature slice.
-
-The engineering foundations (identity, organization, membership,
-authorization primitives, database, CI) are established. Feature work now
-builds upward from those foundations, one approved slice at a time.
-
----
-
-# 38. Update Rules
-
-Update this document when there is a meaningful change to:
-
-* implementation status
-* architecture
-* major technology decisions
-* security model
-* production infrastructure
-* major product scope
-* important open decisions
-* current development phase
-
-Do not update it for every tiny code change.
-
----
-
-# 39. Change Log
-
-| Date       | Change                                 | Owner         |
-| ---------- | -------------------------------------- | ------------- |
-| YYYY-MM-DD | Initial current-state document created | Project Owner |
-| 2026-09-29 | ORM finalized: Prisma (ADR 002 Accepted); stale ORM references updated | Project Owner |
-| 2026-09-29 | Authentication provider finalized: Clerk (ADR 001 Accepted; ADR 015 Accepted) | Project Owner |
-| 2026-09-29 | Testing stack finalized: Vitest + Playwright (ADR 003 Accepted) | Project Owner |
-| 2026-09-29 | Application foundation established: Next.js 16 + TypeScript + Prisma 7 + PostgreSQL config, env validation, Prisma client singleton, health endpoint, Vitest + Playwright smoke tests, CI workflow | Project Owner |
-| 2026-09-29 | Clerk authentication foundation: application User model, idempotent Clerk→User sync, protected `/app`, `/sign-in` page | Project Owner |
-| 2026-09-29 | Organization + owner onboarding: Organization/OrganizationMembership models, onboarding flow, creator becomes OWNER | Project Owner |
-| 2026-09-30 | Gym profile and owner settings: editable organization profile (`/app/org/settings`), server-side OWNER enforcement | Project Owner |
-| 2026-10-01 | Member Management V1 UX finalized in `docs/17-PRODUCT-UX-SPEC.md`: migration-first assumption, manual add member (`/app/org/members/new`) with membership summary, import members (CSV/Excel/image/scan/PDF at UX level), human-review extraction flow, data-quality and duplicate-review rules, member list/details/edit routes and states | Project Owner |
-| 2026-10-01 | Member Management V1 UX amended in `docs/17-PRODUCT-UX-SPEC.md`: WhatsApp-based migration path added as a first-class option ("Send on WhatsApp" in Add Members entry); unified import inbox / migration job concept (all sources → extraction → validation → mandatory human review → confirmation → creation); "submission received" distinguished from "members imported"; new TBDs 18–21 (WhatsApp receiving approach, gym association mechanism, media support, early-rollout operations). Specification only — no implementation claims | Project Owner |
-| 2026-10-01 | Member Management V1 visual design specification added as `docs/17-PRODUCT-UX-SPEC.md` §20.1: implementation-ready screen spec for all ten screens (members list desktop+mobile with five states, Add Members three-choice step, manual add with live membership summary, import entry, processing states, import review, duplicate review, WhatsApp handoff, member details, edit member) plus shared visual language and Figma frame checklist. No product decisions changed; no repo Figma workflow exists, so the spec lives in the UX document. Design preparation only — no implementation claims | Project Owner |
-| 2026-10-01 | Member Management V1 first vertical slice implemented (uncommitted, working tree): `Member` + `Membership` Prisma models and migration `20261001020000_add_members_and_memberships` (fixed V1 plan enum, calendar-month expiry, Decimal fee, no persisted paid amount — Paid = ₹0 / Outstanding = Fee as domain-derived values; composite FK `memberships(organization_id, member_id)` → `members(organization_id, id)` enforcing member/membership organization match at the database level); pure domain module (`src/lib/members.ts`) and server service (`src/lib/server/members.ts`) with validation, tenant isolation, and role-based authorization; routes `/app/org/members`, `/new`, `/[id]`, `/[id]/edit` with search/filters/pagination, live summary, duplicate-phone surfacing, and full state coverage; 58 new tests (105 total) green; lint/typecheck/build green. No import/OCR/WhatsApp/payment/attendance systems built | Project Owner |
-| 2026-10-01 | Member Management V1 corrections (uncommitted, working tree): removed `Membership.paid_amount` per the finalized payment architecture (Outstanding = charge − SUM(confirmed payments); payment claims/confirmations are a later slice, no payment tables created); added database-level tenant integrity via composite unique `members(organization_id, id)` + composite FK, with migration-coherence tests and an opt-in real-database enforcement test (`RUN_DB_TESTS=true`) | Project Owner |
-
----
-
-# 40. Final Rule
-
-This document describes the current state.
-
-If the implementation differs from this document, the difference must be investigated.
-
-Do not silently assume that the documentation is wrong.
-
-Do not silently change architecture to match an AI-generated assumption.
-
-Surface the discrepancy, determine the intended state, and update the appropriate source-of-truth document.
-
----
-```
+This document records the current implementation and decision state
+of the gym-saas project. It is the operational snapshot of the
+repository: what has been decided, what has been implemented, what
+remains open, and what must not change without approval. It is not a
+replacement for the detailed architecture, security, product,
+database, or API documents.
+
+# 2. Product principles (unchanged, still governing)
+
+- Gym member payments are paid **directly to the gym**. The SaaS does
+  not hold or transfer gym membership money.
+- A **payment claim is not a confirmed payment**. A member-reported
+  payment counts only after owner/staff verification creates a ledger
+  payment. Future payment gateways must plug into the same ledger.
+- No Razorpay (or any gateway) in V1. Payment reference is optional
+  for every method.
+- A recorded payment **never renews, extends, or reprices** a
+  membership; payment and renewal are separate domains.
+- The permanent gym QR **identifies the gym only**; it does not
+  authenticate anyone and does not prove physical presence
+  (ADR 022). The phone number is discovery only; the OTP proves
+  control of the phone. The system never reveals whether an arbitrary
+  phone number belongs to a gym.
+- Clerk authenticates owners/staff; member authentication is a
+  separate 2Factor SMS-OTP path that never reads Clerk state
+  (two-hats rule, ADR 021).
+
+# 3. Architecture and security baseline
+
+- Next.js + TypeScript modular monolith; PostgreSQL + Prisma;
+  application-owned authorization with roles
+  OWNER / ADMIN / STAFF / TRAINER / MEMBER.
+- Every tenant-scoped read and write is pinned to an organization
+  resolved server-side from the authenticated actor; client-supplied
+  tenant/member identifiers are never trusted.
+- Money-writing and staff mutations revalidate the actor inside the
+  transaction (earliest organization-membership row locked
+  `FOR UPDATE`, role re-derived from the locked row) — the pattern is
+  uniform across staff management, payment recording, and claim
+  verification, and is proven by genuine revocation-race tests
+  against real PostgreSQL.
+- Financial and staff events are audited (payments, payment claims,
+  staff changes, manual attendance).
+- Balances are always derived (sum of confirmed payments against the
+  latest membership; outstanding floored at ₹0), never stored.
+
+# 4. What is implemented and merged to GitHub main
+
+## 4.1 Foundation, owner auth, onboarding
+Clerk authentication foundation, organization-owner onboarding, gym
+profile settings. CI uses a dedicated throwaway Clerk development
+instance ("Gym SaaS CI"); no production Clerk instance exists yet.
+
+## 4.2 Member management
+Staff-managed member records with memberships (plan, fee, dates),
+derived membership and payment status, member list and detail pages.
+
+## 4.3 Payments V1 (ledger)
+Staff-recorded confirmed payments against the latest membership:
+partial payments allowed, overpayment allowed, outstanding derived
+and floored at ₹0, every recording audited. There is no separate
+charge model — the membership fee is the amount due.
+
+## 4.4 Member OTP, sessions, and linking — code complete, provider UNVERIFIED
+2Factor AUTOGEN/VERIFY foundation with DB-backed rate limiting
+(30-second resend cooldown, 5/phone/hour, 100/org/hour, 5-minute
+challenge TTL, 5 attempts then locked), anti-enumeration responses,
+phone-backed member sessions (SHA-256 token hash only, 30-day
+absolute / 7-day idle expiry), and atomic candidate linking.
+**Unverified:** the live 2Factor wire details have never been
+exercised — no API key has been provisioned and no live OTP
+round-trip has been performed. The OTP endpoints return a safe
+"unavailable" response when unconfigured.
+
+## 4.5 Attendance (Slices 1 + 2)
+Manual staff check-in/check-out with one-open-session enforcement,
+expired-membership warning with server-driven confirmation, and
+no-membership blocking; member self-check-in via the gym QR (expired
+memberships blocked at self-check-in), sign-in UI, attendance
+history, printable QR poster, and an in-app QR scanner. "Today" is
+the Asia/Kolkata day. TRAINER may check members in; check-out remains
+OWNER/ADMIN/STAFF.
+**Unverified:** camera/scanner behavior has never been tested on a
+physical iPhone or Android device; it rests on documented
+WebKit/Chromium behavior only.
+
+## 4.6 Staff management
+Existing-account-first model (a person signs in with Clerk first;
+staff never create accounts or send invitations): OWNER grants
+ADMIN/STAFF/TRAINER, ADMIN grants STAFF/TRAINER, OWNER can never be
+assigned or removed through this flow, no self-change/self-removal,
+and at least one OWNER always remains (enforced transactionally).
+Email lookup uses the Clerk Backend API with exact verified-email
+matching; the local `User` record stores no email. UI at
+`/app/org/staff`.
+
+## 4.7 Payment claims (C1 service + C2 member surface + C3 staff review)
+- **C1 (service, merged 2026-10-11):** `PaymentClaim` lifecycle
+  PENDING → CONFIRMED / REJECTED; exact-duplicate pending claims
+  blocked by a partial unique index; at most 3 pending claims per
+  membership (enforced by locking the membership row); confirmation
+  is one transaction — conditional state transition, exactly one
+  linked ledger payment for the amount actually received (which may
+  differ from, and exceed, the claimed amount), and both
+  `PAYMENT_CLAIM_CONFIRMED` and `PAYMENT_CONFIRMED` audit events.
+  Claims never enter balance derivation.
+- **C2 (member surface, commit `49d1a4f8`):**
+  `POST /api/member-payments/claims` (identity only from the member
+  session; body identity fields ignored) and `/member/payments`,
+  where a member sees their latest membership, derived balance, and
+  their own claims in plain language — pending claims are labelled as
+  not counting as paid yet.
+- **C3-S1 (staff reads, commit `2d12e8f3`):** review-queue and
+  per-member claim-history reads with server-side role enforcement
+  (OWNER/ADMIN/STAFF) and org pinning.
+- **C3-S2 (staff queue UI, commit `548e60b3`):**
+  `/app/org/payment-claims` — confirm with an editable
+  "amount actually received" (defaults to the claimed amount) or
+  two-step reject. Server actions take the actor only from the
+  authenticated session; cache revalidation uses only fixed,
+  trusted paths (no client-submitted identifier can influence it —
+  regression-tested).
+- **C3-S3 (member-detail history, commit `57796bd1`):** read-only
+  claim history on `/app/org/members/[id]`, shown only to roles that
+  may verify claims; foreign/nonexistent members still return the
+  indistinguishable not-found behavior.
+
+# 5. Data
+
+Nine migrations, all applied cleanly to real PostgreSQL 16 in CI and
+in local verification:
+
+`20260928204500_add_application_user`,
+`20260928213000_add_organizations_and_memberships`,
+`20260929230000_add_organization_profile_fields`,
+`20261001020000_add_members_and_memberships`,
+`20261008230000_add_payments_and_audit_log`,
+`20261009010000_add_member_otp_challenges`,
+`20261009110000_add_member_sessions_and_phone_identity`,
+`20261010103000_add_attendance_sessions`,
+`20261011120000_add_payment_claims`.
+
+# 6. Testing and CI (verified evidence)
+
+CI (`.github/workflows/ci.yml`) has three jobs; run `38447698232` on
+`57796bd1` completed **SUCCESS**:
+
+- **build** (2m35s): install, Prisma generate + validate, lint,
+  typecheck, Vitest, Playwright browser smoke tests, production
+  build, docs consistency check.
+- **db-tests** (1m29s): migrations applied to a disposable
+  PostgreSQL 16, then the real-database suites via
+  `scripts/run-db-tests.mjs`, which fails closed on any skip or
+  failure.
+- **e2e-auth** (2m14s): authenticated OWNER smoke test through the
+  real Clerk sign-in path against a disposable database.
+
+Verified counts at this baseline: Vitest **552 passed / 40 skipped**
+(the 40 are exactly the database-gated tests, which run in the
+db-tests job); `test:db` **57/57 passed, 0 skipped** on real
+PostgreSQL 16; Playwright default suite **22 tests in 9 files**
+(plus the separate e2e-auth smoke suite). History note: commit
+`885569f` is a temporary CI diagnostic from the Playwright
+troubleshooting period; it is superseded and inert — no revert is
+required.
+
+# 7. Deployment state
+
+**Nothing is deployed anywhere.** The repository is
+host-compatible (Procfile with release-phase
+`prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
+production dependencies — commit `1803c9b8`) but no host, database,
+domain, or environment has been provisioned. Hosting assessments
+exist (Render recommended for production; Heroku student credit
+assessed as zero-cost staging with material backup limits), but
+**ADR 004 is still Proposed** — no hosting decision has been taken,
+and no environment should hold real pilot data until backup and
+restore requirements are satisfied.
+
+# 8. Known launch blockers and outstanding work
+
+Supported by current repository evidence unless marked otherwise:
+
+1. **Hosting decision and provisioning** — ADR 004 unresolved; no
+   production Clerk instance, domain, or environment variables exist
+   outside CI.
+2. **2Factor live verification** — account, API key (via secure
+   configuration only), DLT registration, and one live OTP
+   round-trip are all outstanding; until then member sign-in is
+   unverified end to end.
+3. **Backups and restore** — no backup schedule, restore drill, or
+   off-platform copy exists for any future production database.
+4. **Monitoring / error tracking** — ADR 007 still Proposed (Sentry
+   the leading candidate); the codebase contains no error-tracking
+   integration at all.
+5. **Membership renewal — Not started.** No renewal flow exists;
+   payments explicitly do not renew. A pilot gym's first plan expiry
+   has no product path yet.
+6. **PWA basics — Not started.** No `public/` directory, manifest,
+   or icons exist.
+7. **Gym switcher — Not started.** Staff and claims surfaces resolve
+   the actor's primary (earliest) gym only; members can belong to
+   multiple gyms but post-login gym selection is limited.
+8. **Identity merge — Not started.** A person who is both staff and
+   member temporarily has two user records by design (ADR 021).
+9. **Owner dashboard** — the organization home is a link hub; no
+   at-a-glance dues/expiry/attendance summary exists.
+10. **SaaS billing/trial — Not started.** No subscription or trial
+    mechanics for gyms.
+11. **Documentation debt** — ADR 023 (staff management) and ADR 024
+    (payment claims) are not written; ADR 013 and ADR 017 remain
+    Proposed although their patterns are implemented.
+
+# 9. Known limitations (accepted, recorded)
+
+- Membership selection everywhere keys off the latest membership by
+  `createdAt`; rows created in the same transaction with identical
+  timestamps have no further tie-break (no product flow creates
+  them).
+- A claim stays attached to the membership that was current at
+  submission; after a future renewal the member's summary moves to
+  the new membership while older claims remain in history.
+- The member detail page reflects claim decisions on next load
+  rather than via targeted cache revalidation (a deliberate
+  consequence of the trusted-revalidation rule in §4.7).
+- CI runs on Node 20; GitHub has announced runner changes for
+  Node 20 actions (informational annotation on current runs, no
+  failures).
+
+# 10. Next steps (each requires its own approval)
+
+1. Decide hosting (resolve ADR 004) and provision a staging
+   environment without real member data.
+2. Provision the production Clerk instance and the 2Factor account;
+   perform one live OTP round-trip.
+3. Implement membership renewal.
+4. Write ADR 023 and ADR 024; refresh this document after the
+   deployment decision.

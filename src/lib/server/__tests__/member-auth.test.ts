@@ -40,6 +40,7 @@ vi.mock("@/lib/server/twofactor-provider", () => ({
 import { MemberValidationError } from "@/lib/members";
 import { requestMemberOtp, verifyMemberOtp } from "@/lib/server/member-auth";
 import { OtpVerificationError } from "@/lib/server/otp-service";
+import { SmsProviderError } from "@/lib/server/sms-provider";
 
 const ORG_ID = "c3298d3b-a07f-33eb-de2b-00333455cf3f";
 const PHONE = "9876543210";
@@ -100,6 +101,129 @@ describe("requestMemberOtp", () => {
     ).rejects.toBeInstanceOf(MemberValidationError);
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
     expect(mockSendOtp).not.toHaveBeenCalled();
+  });
+
+  /** Baseline mocks under which issueChallenge issues a real challenge. */
+  function mockIssuableChallenge() {
+    mockChallengeFindFirst.mockResolvedValue(null);
+    mockChallengeCount.mockResolvedValue(0);
+    mockSendOtp.mockResolvedValue({ providerSessionId: "provider-session-xyz" });
+    mockChallengeCreate.mockResolvedValue({ id: CHALLENGE_ID });
+  }
+
+  it("issues a real challenge for a member phone under join intent, without the eligibility check", async () => {
+    mockIssuableChallenge();
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "join",
+    });
+    expect(result).toEqual({ challengeId: CHALLENGE_ID });
+    // The member-row eligibility check belongs to the link rule only.
+    expect(mockMemberFindFirst).not.toHaveBeenCalled();
+    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("issues a real challenge for a brand-new phone under join intent", async () => {
+    // No Member row exists — under the link rule this phone is
+    // ineligible; join intent is what makes it issuable.
+    mockMemberFindFirst.mockResolvedValue(null);
+    mockIssuableChallenge();
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "join",
+    });
+    expect(result).toEqual({ challengeId: CHALLENGE_ID });
+    expect(mockMemberFindFirst).not.toHaveBeenCalled();
+    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps explicit link intent on the eligibility rule for a new phone", async () => {
+    mockMemberFindFirst.mockResolvedValue(null);
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "link",
+    });
+    expect(result.challengeId).toMatch(UUID_SHAPE);
+    expect(result.challengeId).not.toBe(CHALLENGE_ID);
+    expect(mockMemberFindFirst).toHaveBeenCalledTimes(1);
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+
+  it("normalizes unrecognized intent values to the link rule (fail-safe)", async () => {
+    mockMemberFindFirst.mockResolvedValue(null);
+
+    for (const intent of ["JOIN", "banana", ""]) {
+      const result = await requestMemberOtp({
+        organizationId: ORG_ID,
+        phoneNumber: PHONE,
+        intent,
+      });
+      expect(result.challengeId).toMatch(UUID_SHAPE);
+      expect(result.challengeId).not.toBe(CHALLENGE_ID);
+    }
+    // Every unrecognized value took the eligibility-checked path.
+    expect(mockMemberFindFirst).toHaveBeenCalledTimes(3);
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns a synthetic challenge when a join request trips the resend cooldown", async () => {
+    // Latest challenge is brand new → cooldown trips inside
+    // issueChallenge, and the facade folds it into the same synthetic
+    // response as every other non-issuance.
+    mockChallengeFindFirst.mockResolvedValue({ createdAt: new Date() });
+    mockChallengeCount.mockResolvedValue(0);
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "join",
+    });
+    expect(result.challengeId).toMatch(UUID_SHAPE);
+    expect(result.challengeId).not.toBe(CHALLENGE_ID);
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+
+  it("returns a synthetic challenge when a join request trips the hourly phone cap", async () => {
+    mockChallengeFindFirst.mockResolvedValue(null);
+    // The mocked count serves both the per-phone and per-gym counts;
+    // 5 trips the per-phone cap (OTP_MAX_REQUESTS_PER_PHONE_PER_HOUR).
+    mockChallengeCount.mockResolvedValue(5);
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "join",
+    });
+    expect(result.challengeId).toMatch(UUID_SHAPE);
+    expect(result.challengeId).not.toBe(CHALLENGE_ID);
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+
+  it("propagates a provider failure on the join path (the route renders 503)", async () => {
+    mockChallengeFindFirst.mockResolvedValue(null);
+    mockChallengeCount.mockResolvedValue(0);
+    mockSendOtp.mockRejectedValue(new SmsProviderError("PROVIDER_UNAVAILABLE"));
+
+    await expect(
+      requestMemberOtp({
+        organizationId: ORG_ID,
+        phoneNumber: PHONE,
+        intent: "join",
+      }),
+    ).rejects.toBeInstanceOf(SmsProviderError);
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
   });
 });
 

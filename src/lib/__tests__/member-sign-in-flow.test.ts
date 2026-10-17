@@ -24,6 +24,7 @@ const PHONE = "9876543210";
 type RequestInput = {
   organizationId: string;
   phoneNumber: string;
+  intent?: string;
 };
 type VerifyInput = { organizationId: string; challengeId: string; otp: string };
 type LinkInput = { organizationId: string; challengeId: string };
@@ -124,6 +125,13 @@ describe("MemberSignInFlow — phone step", () => {
       { organizationId: GYM_A, phoneNumber: PHONE },
     ]);
     expect(flow.getState().step).toBe("otp");
+  });
+
+  it("sends no intent on the sign-in journey (the server default applies)", async () => {
+    const { api, flow } = makeFlow();
+    await flow.submitPhone(PHONE);
+    expect(api.requestCalls).toHaveLength(1);
+    expect("intent" in api.requestCalls[0]!).toBe(false);
   });
 
   it("moves to the OTP step with neutral copy and a full cooldown on success", async () => {
@@ -375,6 +383,28 @@ describe("MemberSignInFlow — join intent", () => {
     // Off the phone step the toggle no longer applies.
     flow.chooseSignIn();
     expect(flow.getState().intent).toBe("join");
+  });
+
+  it("declares intent 'join' on the OTP request so a new phone gets a real challenge", async () => {
+    const { api, flow } = makeFlow();
+    flow.chooseJoin();
+    await flow.submitPhone(PHONE);
+    expect(api.requestCalls).toEqual([
+      { organizationId: GYM_A, phoneNumber: PHONE, intent: "join" },
+    ]);
+  });
+
+  it("keeps intent 'join' on a resend during the join journey", async () => {
+    const { api, flow, advance } = makeFlow();
+    flow.chooseJoin();
+    await flow.submitPhone(PHONE);
+    advance(OTP_RESEND_COOLDOWN_MS);
+    expect(flow.canResend()).toBe(true);
+    await flow.resend();
+    expect(api.requestCalls).toEqual([
+      { organizationId: GYM_A, phoneNumber: PHONE, intent: "join" },
+      { organizationId: GYM_A, phoneNumber: PHONE, intent: "join" },
+    ]);
   });
 
   it("verifies through the same OTP journey, then shows details — never links, never probes", async () => {

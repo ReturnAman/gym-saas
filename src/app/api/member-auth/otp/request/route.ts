@@ -26,7 +26,10 @@ import { SmsProviderError } from "@/lib/server/sms-provider";
  * and a rate-limited phone all return the same 200 { challengeId } shape —
  * see requestMemberOtp. Only a provider outage is distinguishable (503),
  * because it applies to every phone equally and reveals nothing about
- * membership.
+ * membership. The body's optional `intent` is passed through to
+ * requestMemberOtp: exactly "join" selects the join-request eligibility
+ * rule (a real challenge for any valid phone); anything else — including
+ * a missing or non-string value — keeps the default member-linking rule.
  */
 export async function POST(request: Request) {
   const requestId = resolveCorrelationId(request);
@@ -36,9 +39,10 @@ export async function POST(request: Request) {
   } catch {
     return validationError();
   }
-  const { organizationId, phoneNumber } = (body ?? {}) as {
+  const { organizationId, phoneNumber, intent } = (body ?? {}) as {
     organizationId?: unknown;
     phoneNumber?: unknown;
+    intent?: unknown;
   };
   if (
     typeof organizationId !== "string" ||
@@ -52,6 +56,9 @@ export async function POST(request: Request) {
     const { challengeId } = await requestMemberOtp({
       organizationId,
       phoneNumber,
+      // Only a string can name an intent; anything else is absent,
+      // which the facade normalizes to the default link rule.
+      intent: typeof intent === "string" ? intent : undefined,
     });
     return NextResponse.json({ challengeId });
   } catch (error) {

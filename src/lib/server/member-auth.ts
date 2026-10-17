@@ -36,30 +36,55 @@ import {
  * response reveals nothing about whether the phone belongs to a member of
  * the gym. Verification against a synthetic id fails generically, like
  * every other verification failure.
+ *
+ * Intent: requestMemberOtp takes an `intent` that selects ONLY which
+ * SMS-eligibility rule applies (see its doc comment). It never grants
+ * authorization: a VERIFIED challenge still proves nothing but control
+ * of the phone, and the consuming endpoints (linking, join requests)
+ * each re-derive everything from the challenge row.
  */
 
 /**
  * Request an OTP for member authentication at one gym.
  *
- * Eligibility (approved V1 definition): ANY Member row in the organization
- * has this phone number — an active membership is not required. Ineligible
- * phones receive no SMS and a synthetic challenge id.
+ * Intent selects the SMS-eligibility rule and nothing else:
+ * - "link" (the default — absent, "link", or any unrecognized value;
+ *   normalization is fail-safe toward the stricter rule): eligibility
+ *   (approved V1 definition) is ANY Member row in the organization with
+ *   this phone number — an active membership is not required. Ineligible
+ *   phones receive no SMS and a synthetic challenge id.
+ * - "join" (exactly the string "join"): the caller has declared, before
+ *   proving anything, that they want to request membership of this gym.
+ *   The member-row check is skipped and any valid phone is issued a real
+ *   challenge, so a genuine newcomer can complete verification and
+ *   submit a join request. This widens only who can trigger an SMS —
+ *   bounded by the same cooldown and per-phone/per-gym caps, which count
+ *   challenge rows regardless of intent — and authorizes nothing: the
+ *   join endpoint independently re-validates the challenge and decides
+ *   whether a request may be created.
+ *
+ * Either way the response contract is identical: a real challenge id, or
+ * a synthetic one when ineligible or rate-limited, so the response never
+ * reveals whether the phone belongs to a member of the gym.
  */
 export async function requestMemberOtp(input: {
   organizationId: string;
   phoneNumber: string;
+  intent?: string;
 }): Promise<{ challengeId: string }> {
   // Authoritative phone validation (canonical 10-digit format). Throws
   // MemberValidationError on malformed input — a shape error, safe to
   // surface as a validation response.
   const phoneNumber = validatePhoneNumber(input.phoneNumber);
 
-  const member = await db.member.findFirst({
-    where: { organizationId: input.organizationId, phoneNumber },
-    select: { id: true },
-  });
-  if (!member) {
-    return { challengeId: randomUUID() };
+  if (input.intent !== "join") {
+    const member = await db.member.findFirst({
+      where: { organizationId: input.organizationId, phoneNumber },
+      select: { id: true },
+    });
+    if (!member) {
+      return { challengeId: randomUUID() };
+    }
   }
 
   try {
@@ -71,7 +96,7 @@ export async function requestMemberOtp(input: {
     if (error instanceof OtpRateLimitError) {
       // Indistinguishable from the ineligible response by design: a real
       // rate-limit signal here would reveal that this phone has recent
-      // challenges — i.e. that it belongs to a member.
+      // challenges — on the link path, that it belongs to a member.
       return { challengeId: randomUUID() };
     }
     throw error;

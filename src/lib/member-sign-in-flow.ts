@@ -73,6 +73,12 @@ export interface SignInApi {
   requestOtp(input: {
     organizationId: string;
     phoneNumber: string;
+    /**
+     * Present only on the join journey: exactly "join" asks the server
+     * to issue a real challenge for a phone with no member record.
+     * Absent on the sign-in journey, which keeps the default rule.
+     */
+    intent?: string;
   }): Promise<{ challengeId: string }>;
   verifyOtp(input: {
     organizationId: string;
@@ -224,6 +230,10 @@ export class MemberSignInFlow {
       const { challengeId } = await this.api.requestOtp({
         organizationId: this.organizationId,
         phoneNumber: trimmed,
+        // The join journey declares its intent so a phone with no
+        // member record still receives a real challenge; the sign-in
+        // journey passes nothing and keeps the default rule.
+        ...(this.state.intent === "join" ? { intent: "join" } : {}),
       });
       if (generation !== this.generation) return;
       this.challengeId = challengeId;
@@ -414,6 +424,9 @@ export class MemberSignInFlow {
       const { challengeId } = await this.api.requestOtp({
         organizationId: this.organizationId,
         phoneNumber: this.state.phoneNumber,
+        // A resend stays on the journey that started it: a join
+        // journey's resent challenge must be a real one too.
+        ...(this.state.intent === "join" ? { intent: "join" } : {}),
       });
       if (generation !== this.generation) return;
       // The fresh challenge supersedes the old one server-side.

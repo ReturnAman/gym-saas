@@ -12,6 +12,7 @@ import {
  *
  * - POST /api/member-auth/otp/request → 200 { challengeId };
  *   400 VALIDATION_ERROR; 503 OTP_UNAVAILABLE; 500 INTERNAL_ERROR.
+ *   The body carries `intent: "join"` only on the join journey.
  * - POST /api/member-auth/otp/verify → 200 { verified: true };
  *   every failure is the same generic 400 (503 on provider outage).
  * - POST /api/member-auth/link → 200 { linked: true } + session
@@ -58,6 +59,9 @@ export const memberSignInApi: SignInApi = {
     const json = await postJson("/api/member-auth/otp/request", {
       organizationId: input.organizationId,
       phoneNumber: input.phoneNumber,
+      // Intent travels only when the flow declares it (the join
+      // journey); the sign-in journey's body is unchanged.
+      ...(input.intent ? { intent: input.intent } : {}),
     });
     const challengeId = (json as { challengeId?: unknown } | null)
       ?.challengeId;

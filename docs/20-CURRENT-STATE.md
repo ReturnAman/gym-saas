@@ -1,18 +1,17 @@
 # 20 — CURRENT STATE
 
 **Project:** gym-saas
-**Version:** 0.6 (draft — pending owner approval)
-**Status:** Core feature set implemented. Everything through `a046fcb` is merged to GitHub `main`; the three newest feature commits are committed on **local `main` only** and have not been pushed. Not deployed and not ready for public launch.
+**Version:** 0.7 (draft — pending owner approval)
+**Status:** Core feature set implemented and merged to GitHub `main`; not deployed and not ready for public launch.
 **Last Updated:** 2026-10-18
-**Baseline:** local `main` @ `1cc6b885ee12702569b75469120f51f64c6d5b50` — the three newest commits (`5f5aedf`, `e8122b1`, `1cc6b88`) are **local only, not yet pushed**; GitHub `main` remains at `a046fcb`.
-**Latest CI:** run `38603651141` on `a046fcb` — SUCCESS (build, db-tests, e2e-auth). CI has **not** run on `5f5aedf`, `e8122b1`, or `1cc6b88`; those commits are verified locally under Node 20.20.2 (§6).
+**Baseline:** GitHub `main` @ `8a9af93e0700bba4b17e7ff2110eb3d758148049`
+**Latest CI:** run `39064420227` on `8a9af93` — SUCCESS (build, db-tests, e2e-auth)
 
-> This revision replaces the 2026-10-17 snapshot, which predates
-> the join-request decision slice (approve/reject).
+> This revision follows the push of the join-request stack
+> (`5f5aedf`, `e8122b1`, `1cc6b88`, `8a9af93`) to GitHub `main`
+> and its first green CI run.
 > Status words used below:
-> **Completed** = implemented, tested, and merged to `main`
-> (GitHub `main`, except §4.9, which is committed on local
-> `main` only — see its heading);
+> **Completed** = implemented, tested, and merged to `main`;
 > **Unverified** = code exists but the external integration has never
 > run live; **Not started** = no implementation exists. Nothing in
 > this document claims a deployment, backup, or provider integration
@@ -72,7 +71,7 @@ database, or API documents.
   constraint, ensures one intentional recording or claim
   confirmation creates at most one payment (§4.8).
 
-# 4. What is implemented and merged to main (§4.1–§4.8: GitHub `main`; §4.9: local `main` only — see its heading)
+# 4. What is implemented and merged to GitHub main
 
 ## 4.1 Foundation, owner auth, onboarding
 Clerk authentication foundation, organization-owner onboarding, gym
@@ -200,7 +199,7 @@ matching; the local `User` record stores no email. UI at
   settings, and onboarding actions have no shared error translator,
   so their failures are not yet logged (§8).
 
-## 4.9 Member join requests and staff decisions (Slices 1 + 2, commits `5f5aedf`, `e8122b1`, `1cc6b88`) — local main only, not yet pushed
+## 4.9 Member join requests and staff decisions (Slices 1 + 2, commits `5f5aedf`, `e8122b1`, `1cc6b88`)
 
 A person who opens a gym's invitation link/QR can now ask to join
 that gym before any member record exists:
@@ -319,12 +318,12 @@ that gym before any member record exists:
 
 # 5. Data
 
-Twelve migrations. The first ten shipped in `a046fcb`, whose CI
-run completed SUCCESS (run `38603651141`); the workflow's
-db-tests job applies migrations with `prisma migrate deploy` to
-a disposable PostgreSQL 16 before running the database suites.
-All twelve are verified locally by direct `prisma migrate
-deploy` against PostgreSQL 16 (exit 0):
+Twelve migrations, all covered by CI: run `39064420227` on
+`8a9af93` completed SUCCESS, and the workflow's db-tests and
+e2e-auth jobs each apply migrations with `prisma migrate
+deploy` to a disposable PostgreSQL 16. All twelve are also
+verified locally by direct `prisma migrate deploy` against
+PostgreSQL 16 (exit 0):
 
 `20260928204500_add_application_user`,
 `20260928213000_add_organizations_and_memberships`,
@@ -347,8 +346,8 @@ from SET NULL to RESTRICT; no data changes; §4.9).
 
 # 6. Testing and CI (verified evidence)
 
-CI (`.github/workflows/ci.yml`) has three jobs; run `38603651141` on
-`a046fcb` completed **SUCCESS**:
+CI (`.github/workflows/ci.yml`) has three jobs; run `39064420227` on
+`8a9af93` completed **SUCCESS**:
 
 - **build**: install, Prisma generate + validate, lint,
   typecheck, Vitest, Playwright browser smoke tests, production
@@ -360,22 +359,18 @@ CI (`.github/workflows/ci.yml`) has three jobs; run `38603651141` on
 - **e2e-auth**: authenticated OWNER smoke test through the
   real Clerk sign-in path against a disposable database.
 
-CI-verified counts at `a046fcb`: Vitest **616 passed / 56 skipped**;
-`test:db` **87/87 passed, 0 skipped**; Playwright default suite
-**22 tests in 9 files** (plus the separate e2e-auth smoke suite).
-
-Locally verified counts at the current baseline `1cc6b88`
-(2026-10-17/18, Node **20.20.2** — the CI Node major — with the
-full battery run on the committed tree): Vitest **711 passed /
-93 skipped** (the skips are the database-gated suites, which run
-under `test:db`, plus a small number of pre-existing conditional
-skips); `test:db` **128/128 passed, 0 skipped** on real
-PostgreSQL 16 (including the join-request submission, decision,
-and concurrency suites alongside pool-configuration and
-payment-idempotency); lint, typecheck, and production build all
-exit 0. These are **local results only** — CI has not run on the
-three local commits. The Playwright suites were not re-run
-locally; their last execution is the CI run above. History note: commit
+Verified counts at the current baseline `8a9af93`: Vitest
+**711 passed / 93 skipped** (the skips are the database-gated
+suites, which run under `test:db`, plus a small number of
+pre-existing conditional skips); `test:db` **128/128 passed,
+0 skipped** on real PostgreSQL 16 (including the join-request
+submission, decision, and concurrency suites alongside
+pool-configuration and payment-idempotency); Playwright default
+suite **22 tests passed** in the build job (plus the separate
+e2e-auth smoke suite, also green). The same battery was run
+locally before the push (Node **20.20.2**, the CI Node major)
+with identical results, and CI run `39064420227` confirms them
+on GitHub. History note: commit
 `885569f` is a temporary CI diagnostic from the Playwright
 troubleshooting period; it is superseded and inert — no revert is
 required.
@@ -383,10 +378,8 @@ required.
 # 7. Deployment state
 
 **Nothing is deployed anywhere, and nothing has been provisioned.**
-The three newest feature commits (`5f5aedf` join requests,
-`e8122b1` join-intent OTP, `1cc6b88` join-request decisions)
-exist on local `main` only and have not been pushed; GitHub
-`main` is at `a046fcb`.
+GitHub `main` is at `8a9af93`; the full feature set described
+in §4 is merged there and CI-green (run `39064420227`).
 The repository is host-compatible (Procfile with release-phase
 `prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
 production dependencies — commit `1803c9b8`) but no host, database,
@@ -454,9 +447,6 @@ Supported by current repository evidence unless marked otherwise:
 15. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.
-16. **Local commits not yet verified in CI.** The three newest
-    feature commits (join requests, join-intent OTP, join-request
-    decisions) are local-only; CI has not run on them (§6).
 
 # 9. Known limitations (accepted, recorded)
 
@@ -499,8 +489,6 @@ Supported by current repository evidence unless marked otherwise:
    drill before any real data is considered.
 2. Provision the production Clerk instance and the 2Factor account;
    perform one live OTP round-trip.
-3. Push the three local feature commits (`5f5aedf`, `e8122b1`,
-   `1cc6b88`) so CI verifies them on GitHub `main`.
-4. Implement membership renewal, then payment reversal records.
-5. Write ADR 023 and ADR 024; refresh this document after the
+3. Implement membership renewal, then payment reversal records.
+4. Write ADR 023 and ADR 024; refresh this document after the
    deployment decision lands.

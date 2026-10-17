@@ -463,8 +463,9 @@ async function findDuplicatePhones(
   organizationId: string,
   phoneNumber: string,
   excludeMemberId?: string,
+  client: Prisma.TransactionClient = db,
 ): Promise<DuplicateMember[]> {
-  return db.member.findMany({
+  return client.member.findMany({
     where: {
       organizationId,
       phoneNumber,
@@ -500,17 +501,36 @@ export async function createMemberWithMembership(
 
   const validated = validateMemberInput(input);
 
-  if (!opts.allowDuplicate) {
-    const duplicates = await findDuplicatePhones(
-      scope.organizationId,
-      validated.phoneNumber,
-    );
-    if (duplicates.length > 0) {
-      throw new MemberDuplicateError(duplicates);
-    }
-  }
-
   const memberId = await db.$transaction(async (tx) => {
+    // Serialize against join-request decisions for the same
+    // (gym, phone): approval of a pending request scans the member
+    // records for the phone and adopts/creates under this same lock
+    // (member-join-requests.ts lockDecisionPhone), so a manual
+    // creation here cannot interleave with an approval for the same
+    // person — the two linearize and the later one observes the
+    // earlier one's committed member.
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${"member-decision:" + scope.organizationId + ":" + validated.phoneNumber}))
+    `;
+    // The duplicate check runs under that lock, inside this
+    // transaction: a member committed first by a racing approval (or
+    // by another staff creation) is observed here, so two concurrent
+    // creations for the same phone cannot both pass the check the
+    // way a pre-transaction check allowed. Throwing rolls the
+    // transaction back — nothing is written, exactly as when the
+    // check ran before the transaction. With allowDuplicate the
+    // check is skipped entirely, as before.
+    if (!opts.allowDuplicate) {
+      const duplicates = await findDuplicatePhones(
+        scope.organizationId,
+        validated.phoneNumber,
+        undefined,
+        tx,
+      );
+      if (duplicates.length > 0) {
+        throw new MemberDuplicateError(duplicates);
+      }
+    }
     const member = await tx.member.create({
       data: {
         organizationId: scope.organizationId,

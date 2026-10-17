@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { formatDate, formatInr, PLAN_LABELS } from "@/lib/members";
 import { requireOrganizationContext } from "@/lib/server/authorization";
 import {
   MemberJoinRequestAuthorizationError,
@@ -9,25 +8,40 @@ import {
   type MemberJoinRequestView,
 } from "@/lib/server/member-join-requests";
 
+import {
+  JoinRequestsManager,
+  type JoinRequestRow,
+} from "./join-requests-manager";
 import styles from "./join-requests.module.css";
 
 /**
- * Pending members — the read-only join-request queue for the actor's
- * gym.
+ * Pending members — the join-request queue for the actor's gym.
  *
  * Requires authentication AND organization membership (via
  * requireOrganizationContext). The organization is the actor's primary
  * gym — the same server-side resolution every org page uses. Viewing
  * is OWNER / ADMIN / STAFF (the service enforces the same rule on the
- * read); other roles get a no-access state here, and the service
- * remains the boundary.
+ * read and on every decision); other roles get a no-access state
+ * here, and the service remains the boundary.
  *
- * Read-only by design (Slice 1): requests are listed for awareness
- * only — approval and rejection arrive in a later slice, so there
- * are deliberately no actions here. Names are shown as the requester
- * submitted them; plan, fee, and start date are their proposals, not
- * confirmed membership terms.
+ * Staff decide each request here (Slice 2): approve it — confirming
+ * the plan, fee, and start date, which creates the member and their
+ * first membership — or reject it. Names are shown as the requester
+ * submitted them; plan, fee, and start date start as their proposals
+ * and become membership terms only when staff confirm them.
  */
+
+function toRow(request: MemberJoinRequestView): JoinRequestRow {
+  return {
+    id: request.id,
+    name: request.name,
+    phoneNumber: request.phoneNumber,
+    requestedPlan: request.requestedPlan,
+    proposedFeePaise: request.proposedFeePaise,
+    proposedStartDate: request.proposedStartDate,
+    submittedAt: request.submittedAt,
+  };
+}
 export default async function JoinRequestsPage() {
   const { user, membership, organization } =
     await requireOrganizationContext();
@@ -95,25 +109,7 @@ export default async function JoinRequestsPage() {
               pending requests.
             </p>
           )}
-          <ul className={styles.list} aria-label="Pending join requests">
-            {requests.map((request) => (
-              <li key={request.id} className={styles.row}>
-                <div className={styles.rowHeader}>
-                  <span className={styles.rowName}>{request.name}</span>
-                  <span>{request.phoneNumber}</span>
-                </div>
-                <p className={styles.rowMeta}>
-                  Plan: {PLAN_LABELS[request.requestedPlan]} · Proposed
-                  fee: {formatInr(request.proposedFeePaise)}
-                </p>
-                <p className={styles.rowMeta}>
-                  Proposed start date:{" "}
-                  {formatDate(new Date(request.proposedStartDate))} ·
-                  Submitted: {formatDate(new Date(request.submittedAt))}
-                </p>
-              </li>
-            ))}
-          </ul>
+          <JoinRequestsManager requests={requests.map(toRow)} />
         </>
       )}
     </main>

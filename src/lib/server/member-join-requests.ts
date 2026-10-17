@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type MemberJoinRequest, type Role } from "@prisma/client";
 
 import {
+  calculateExpiryDate,
   isMembershipPlan,
   parseDateInput,
   MemberValidationError,
@@ -11,6 +12,8 @@ import {
   type MembershipPlan,
 } from "../members";
 import {
+  AUDIT_EVENT_MEMBER_JOIN_REQUEST_APPROVED,
+  AUDIT_EVENT_MEMBER_JOIN_REQUEST_REJECTED,
   AUDIT_EVENT_MEMBER_JOIN_REQUESTED,
   writeAuditEvent,
 } from "./audit";
@@ -521,4 +524,499 @@ export async function listPendingJoinRequests(
     db.memberJoinRequest.count({ where }),
   ]);
   return { requests: rows.map(toJoinRequestView), totalPending };
+}
+
+// ---------------------------------------------------------------------------
+// Decisions (Slice 2): approve / reject a pending join request.
+// ---------------------------------------------------------------------------
+
+/**
+ * Staff decisions on join requests.
+ *
+ * A decision is ONE transaction, so it either lands completely —
+ * request transitioned, member/membership side effects, decision
+ * audit — or not at all:
+ *
+ * - The decider's authority is revalidated INSIDE the transaction
+ *   under a lock on their organization-membership row in the
+ *   request's gym (the payment-claims revalidate pattern): the
+ *   organization always comes from the request row itself, a decider
+ *   with no membership in that gym gets the same not-found outcome
+ *   as a nonexistent request (no tenant oracle), and only OWNER /
+ *   ADMIN / STAFF may decide — a demotion or removal that commits
+ *   first is seen by the locked read and denies the decision.
+ * - A per-(gym, phone) advisory lock, taken after the actor lock in
+ *   every decision and in staff member creation, serializes the
+ *   decision against other decisions for the same phone and against
+ *   createMemberWithMembership: the candidate scan below therefore
+ *   observes a stable member set for the phone and linearizes with
+ *   staff creating that member by hand.
+ * - The PENDING → decided transition is a conditional update that
+ *   only matches a still-PENDING row: two staff racing to decide
+ *   cannot both win, and the loser creates nothing.
+ *
+ * Approval resolves the member with the same partition member
+ * linking applies — never overwriting another user's link, never
+ * merging duplicate records — creates the member's FIRST membership
+ * from the staff-confirmed terms (expiry derived, exactly as staff
+ * member creation derives it), and records which member resulted.
+ * Approval is not a payment: it creates no Payment and no claim,
+ * and the new membership's fee is simply outstanding. Any existing
+ * Membership row blocks approval outright: stacking a second period
+ * onto a member who already has one is a staff decision for the
+ * member surfaces, not a side effect of a queue click.
+ */
+
+/** Thrown when the request cannot be found in the decider's reach. */
+export class MemberJoinRequestNotFoundError extends Error {
+  constructor(message = "Join request not found.") {
+    super(message);
+    this.name = "MemberJoinRequestNotFoundError";
+  }
+}
+
+/** Thrown when the request has already been decided (decision race). */
+export class MemberJoinRequestAlreadyDecidedError extends Error {
+  constructor(message = "This join request has already been decided.") {
+    super(message);
+    this.name = "MemberJoinRequestAlreadyDecidedError";
+  }
+}
+
+/** Why an approval cannot proceed against the current member records. */
+export type JoinRequestDecisionConflictReason =
+  | "member_linked_elsewhere"
+  | "duplicate_member_records"
+  | "member_has_membership";
+
+const DECISION_CONFLICT_MESSAGES: Record<
+  JoinRequestDecisionConflictReason,
+  string
+> = {
+  member_linked_elsewhere:
+    "This phone number belongs to a member record linked to a different account.",
+  duplicate_member_records:
+    "More than one unlinked member record exists for this phone number.",
+  member_has_membership:
+    "The member already has a membership, so approval cannot create another one.",
+};
+
+/**
+ * Thrown when approval would have to overwrite a link, merge
+ * duplicates, or stack a second membership. The request stays
+ * PENDING (the whole transaction rolls back) for staff to resolve
+ * through the member surfaces first.
+ */
+export class MemberJoinRequestDecisionConflictError extends Error {
+  readonly reason: JoinRequestDecisionConflictReason;
+
+  constructor(reason: JoinRequestDecisionConflictReason) {
+    super(DECISION_CONFLICT_MESSAGES[reason]);
+    this.name = "MemberJoinRequestDecisionConflictError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Roles allowed to decide join requests: the same OWNER / ADMIN /
+ * STAFF set that may view the queue (TRAINER never sees prospect
+ * phone numbers, so TRAINER never decides on them either).
+ */
+export function canDecideJoinRequests(role: Role): boolean {
+  return canViewJoinRequests(role);
+}
+
+/** The staff-confirmed membership terms, as submitted by the form. */
+export interface ApproveJoinRequestTerms {
+  plan: string;
+  /** Decimal string, e.g. "6000" or "6000.50" — the raw form value. */
+  fee: string;
+  /** Calendar date "YYYY-MM-DD" — the raw form value. */
+  startDate: string;
+}
+
+interface ValidatedDecisionTerms {
+  plan: MembershipPlan;
+  feePaise: number;
+  startDate: Date;
+}
+
+/**
+ * Pure validation of the staff-confirmed terms, reusing the shared
+ * member-input validators (the exact fee/plan/date rules submission
+ * and staff member creation use). Runs BEFORE the decision
+ * transaction: a typo'd term must fail as a field error, never as a
+ * half-decided request.
+ */
+function validateDecisionTerms(
+  terms: ApproveJoinRequestTerms,
+): ValidatedDecisionTerms {
+  const fields: Partial<Record<JoinRequestField, string>> = {};
+
+  let feePaise = 0;
+  try {
+    feePaise = validateFee(terms.fee);
+  } catch (error) {
+    if (error instanceof MemberValidationError) {
+      fields.fee = error.errors.fee;
+    } else {
+      throw error;
+    }
+  }
+
+  let plan: MembershipPlan | null = null;
+  const planValue = terms.plan.trim();
+  if (isMembershipPlan(planValue)) {
+    plan = planValue;
+  } else {
+    fields.plan =
+      "Choose a membership plan: Monthly, 3 Months, 6 Months, or 12 Months.";
+  }
+
+  const startDate = parseDateInput(terms.startDate);
+  if (!startDate) {
+    fields.startDate = "Start date is required. Choose a valid start date.";
+  }
+
+  if (Object.keys(fields).length > 0 || !plan || !startDate) {
+    throw new MemberJoinRequestValidationError(fields);
+  }
+  return { plan, feePaise, startDate };
+}
+
+/**
+ * The decision lock shared with staff member creation: one advisory
+ * lock per (gym, phone) linearizes join-request decisions against
+ * each other and against createMemberWithMembership for the same
+ * phone (see members.ts). Distinct from submission's
+ * "member-join-user:" lock — submissions create no members, so they
+ * are not part of this lock domain.
+ */
+async function lockDecisionPhone(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  phoneNumber: string,
+): Promise<void> {
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(hashtext(${"member-decision:" + organizationId + ":" + phoneNumber}))
+  `;
+}
+
+interface LockedDeciderRow {
+  role: Role;
+}
+
+/**
+ * Re-derive the decider's authority inside the decision transaction,
+ * under a lock on their membership row IN THE REQUEST'S GYM (the
+ * payment-claims revalidateVerifierInTransaction pattern, scoped to
+ * the organization the request belongs to). The locked row
+ * serializes against the role change/removal itself, so the two
+ * linearize: a revocation that committed first is observed and
+ * denies; one still in flight waits and then applies to a state
+ * where the decision is already final. No row in this gym is the
+ * not-found outcome — a decider from another tenant must not learn
+ * that the request exists.
+ */
+async function revalidateDeciderInTransaction(
+  tx: Prisma.TransactionClient,
+  actorUserId: string,
+  organizationId: string,
+): Promise<void> {
+  const rows = await tx.$queryRaw<LockedDeciderRow[]>`
+    SELECT role
+    FROM organization_memberships
+    WHERE user_id = ${actorUserId}
+      AND organization_id = ${organizationId}
+    FOR UPDATE
+  `;
+  const current = rows[0];
+  if (!current) {
+    throw new MemberJoinRequestNotFoundError();
+  }
+  if (!canDecideJoinRequests(current.role)) {
+    throw new MemberJoinRequestAuthorizationError(
+      "You do not have permission to decide join requests.",
+    );
+  }
+}
+
+interface DecisionRequestRow {
+  id: string;
+  organizationId: string;
+  userId: string;
+  phoneNumber: string;
+  name: string;
+}
+
+/**
+ * Load the request being decided. The row is loaded by ID alone
+ * because it is the authority on its own organization — the
+ * decider's membership is then checked against THAT organization
+ * under lock, which is what pins the tenant: an ID from another gym
+ * resolves only for a user who is staff of that gym.
+ */
+async function loadRequestForDecision(
+  tx: Prisma.TransactionClient,
+  requestId: string,
+): Promise<DecisionRequestRow> {
+  const request = await tx.memberJoinRequest.findFirst({
+    where: { id: requestId },
+    select: {
+      id: true,
+      organizationId: true,
+      userId: true,
+      phoneNumber: true,
+      name: true,
+    },
+  });
+  if (!request) {
+    throw new MemberJoinRequestNotFoundError();
+  }
+  return request;
+}
+
+export interface ApproveJoinRequestResult {
+  requestId: string;
+  memberId: string;
+  membershipId: string;
+  /** True when approval adopted the pre-existing unlinked record. */
+  adoptedExistingMember: boolean;
+}
+
+/**
+ * Approve a pending join request: the requester becomes a member of
+ * the gym, linked to their phone-backed User, with a first
+ * membership on the staff-confirmed terms. See the section header
+ * for the transactional contract; every failure after the transition
+ * rolls the whole decision back, leaving the request PENDING.
+ */
+export async function approveJoinRequest(
+  actorUserId: string,
+  requestId: string,
+  terms: ApproveJoinRequestTerms,
+): Promise<ApproveJoinRequestResult> {
+  if (!actorUserId) {
+    throw new MemberJoinRequestAuthorizationError(
+      "Authentication is required.",
+    );
+  }
+  const validated = validateDecisionTerms(terms);
+  const now = new Date();
+
+  try {
+    return await db.$transaction(async (tx) => {
+      const request = await loadRequestForDecision(tx, requestId);
+      const { organizationId } = request;
+
+      // 1. Revalidate the decider under lock before any mutation.
+      await revalidateDeciderInTransaction(tx, actorUserId, organizationId);
+
+      // 2. Serialize against other decisions and staff member
+      //    creation for this (gym, phone).
+      await lockDecisionPhone(tx, organizationId, request.phoneNumber);
+
+      // 3. Claim the decision atomically: only a still-PENDING
+      //    request transitions, so racing deciders cannot both win.
+      //    (The request row was just loaded inside this transaction,
+      //    so a zero count can only mean it is no longer PENDING.)
+      const transition = await tx.memberJoinRequest.updateMany({
+        where: { id: request.id, organizationId, status: "PENDING" },
+        data: {
+          status: "APPROVED",
+          decidedByUserId: actorUserId,
+          decidedAt: now,
+        },
+      });
+      if (transition.count !== 1) {
+        throw new MemberJoinRequestAlreadyDecidedError();
+      }
+
+      // 4. Resolve the member — the same partition member linking
+      //    applies. Approval never overwrites a link and never
+      //    merges duplicate records.
+      const candidates = await tx.member.findMany({
+        where: { organizationId, phoneNumber: request.phoneNumber },
+      });
+      const linkedToRequester = candidates.filter(
+        (m) => m.userId === request.userId,
+      );
+      const linkedToOther = candidates.filter(
+        (m) => m.userId !== null && m.userId !== request.userId,
+      );
+      const unlinked = candidates.filter((m) => m.userId === null);
+      if (linkedToOther.length > 0) {
+        throw new MemberJoinRequestDecisionConflictError(
+          "member_linked_elsewhere",
+        );
+      }
+
+      let member = linkedToRequester[0] ?? null;
+      let adoptedExistingMember = false;
+      if (!member) {
+        // The requester must not already be linked to a different
+        // Member in this gym (under another phone): adopting or
+        // creating here would split one person across two records.
+        const existingLink = await tx.member.findFirst({
+          where: { organizationId, userId: request.userId },
+          select: { id: true },
+        });
+        if (existingLink) {
+          throw new MemberJoinRequestDecisionConflictError(
+            "member_linked_elsewhere",
+          );
+        }
+        if (unlinked.length > 1) {
+          throw new MemberJoinRequestDecisionConflictError(
+            "duplicate_member_records",
+          );
+        }
+        const candidate = unlinked[0];
+        if (candidate) {
+          // Adopt the staff-created record as-is (D4): only the link
+          // is set; its name/phone stay exactly as staff recorded
+          // them.
+          member = await tx.member.update({
+            where: { id: candidate.id },
+            data: { userId: request.userId },
+          });
+          adoptedExistingMember = true;
+        }
+      }
+      if (!member) {
+        member = await tx.member.create({
+          data: {
+            organizationId,
+            name: request.name,
+            phoneNumber: request.phoneNumber,
+            userId: request.userId,
+          },
+        });
+      }
+
+      // 5. D2 guard: approval creates the member's FIRST membership
+      //    only. Any existing period — however it got there — blocks
+      //    the decision rather than being stacked over.
+      const existingMemberships = await tx.membership.count({
+        where: { organizationId, memberId: member.id },
+      });
+      if (existingMemberships > 0) {
+        throw new MemberJoinRequestDecisionConflictError(
+          "member_has_membership",
+        );
+      }
+
+      // 6. The initial membership on the confirmed terms. Expiry is
+      //    derived by calculateExpiryDate — the same rule staff
+      //    member creation applies; there is no staff-typed expiry.
+      const expiryDate = calculateExpiryDate(
+        validated.startDate,
+        validated.plan,
+      );
+      const membership = await tx.membership.create({
+        data: {
+          organizationId,
+          memberId: member.id,
+          plan: validated.plan,
+          startDate: validated.startDate,
+          expiryDate,
+          // Exact Decimal from integer paise — no floating point.
+          fee: new Prisma.Decimal(validated.feePaise).div(100),
+        },
+        select: { id: true },
+      });
+
+      // 7. Record which member the request produced (the link the
+      //    RESTRICT foreign key protects) and audit the decision —
+      //    all inside this transaction.
+      await tx.memberJoinRequest.update({
+        where: { id: request.id },
+        data: { resultingMemberId: member.id },
+      });
+      await writeAuditEvent(tx, {
+        organizationId,
+        actorUserId,
+        event: AUDIT_EVENT_MEMBER_JOIN_REQUEST_APPROVED,
+        targetType: "MemberJoinRequest",
+        targetId: request.id,
+        metadata: {
+          joinRequestId: request.id,
+          memberId: member.id,
+          membershipId: membership.id,
+          plan: validated.plan,
+          feePaise: validated.feePaise,
+          startDate: validated.startDate.toISOString(),
+          expiryDate: expiryDate.toISOString(),
+          adoptedExistingMember,
+        },
+      });
+
+      return {
+        requestId: request.id,
+        memberId: member.id,
+        membershipId: membership.id,
+        adoptedExistingMember,
+      };
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      // The members (organization_id, user_id) partial unique index
+      // fired: between the candidate scan and the write, a
+      // concurrent link attached the requester's account to another
+      // record in this gym. That is the linked-elsewhere conflict,
+      // not a server fault.
+      throw new MemberJoinRequestDecisionConflictError(
+        "member_linked_elsewhere",
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Reject a pending join request: it closes with the decider and the
+ * decision time recorded, and nothing else is created — no member,
+ * no membership, no payment.
+ */
+export async function rejectJoinRequest(
+  actorUserId: string,
+  requestId: string,
+): Promise<{ requestId: string }> {
+  if (!actorUserId) {
+    throw new MemberJoinRequestAuthorizationError(
+      "Authentication is required.",
+    );
+  }
+  const now = new Date();
+
+  await db.$transaction(async (tx) => {
+    const request = await loadRequestForDecision(tx, requestId);
+    const { organizationId } = request;
+
+    // Same revalidation and lock order as approval, so the two
+    // decisions linearize against each other.
+    await revalidateDeciderInTransaction(tx, actorUserId, organizationId);
+    await lockDecisionPhone(tx, organizationId, request.phoneNumber);
+
+    const transition = await tx.memberJoinRequest.updateMany({
+      where: { id: request.id, organizationId, status: "PENDING" },
+      data: {
+        status: "REJECTED",
+        decidedByUserId: actorUserId,
+        decidedAt: now,
+      },
+    });
+    if (transition.count !== 1) {
+      throw new MemberJoinRequestAlreadyDecidedError();
+    }
+    await writeAuditEvent(tx, {
+      organizationId,
+      actorUserId,
+      event: AUDIT_EVENT_MEMBER_JOIN_REQUEST_REJECTED,
+      targetType: "MemberJoinRequest",
+      targetId: request.id,
+      metadata: { joinRequestId: request.id },
+    });
+  });
+  return { requestId };
 }

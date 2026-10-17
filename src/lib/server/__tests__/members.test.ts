@@ -97,7 +97,11 @@ function mockSuccessfulCreate() {
   mockMembershipCreate.mockResolvedValue({ id: "membership-id" });
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
-      member: { create: mockMemberCreate },
+      // The member-decision advisory lock is a no-op in this mock:
+      // these tests pin validation/authorization behaviour, and the
+      // lock's serialization is covered on a real database.
+      $executeRaw: async () => 1,
+      member: { create: mockMemberCreate, findMany: mockMemberFindMany },
       membership: { create: mockMembershipCreate },
     }),
   );
@@ -194,9 +198,14 @@ describe("createMemberWithMembership", () => {
   });
 
   it("holds creation back when the phone number is already in use", async () => {
+    // The duplicate check runs inside the transaction, under the
+    // member-decision advisory lock, so it observes members committed
+    // by racing creations/approvals. Throwing there still writes
+    // nothing: neither the member nor the membership is created.
     const duplicates = [
       { id: "other-id", name: "Rahul S", phoneNumber: "9876543210" },
     ];
+    mockSuccessfulCreate();
     mockMemberFindMany.mockResolvedValue(duplicates);
 
     const error = await createMemberWithMembership(USER_ID, VALID_INPUT).catch(
@@ -204,7 +213,9 @@ describe("createMemberWithMembership", () => {
     );
     expect(error).toBeInstanceOf(MemberDuplicateError);
     expect((error as MemberDuplicateError).duplicates).toEqual(duplicates);
-    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockMemberCreate).not.toHaveBeenCalled();
+    expect(mockMembershipCreate).not.toHaveBeenCalled();
   });
 
   it("creates anyway when the duplicate is explicitly acknowledged", async () => {

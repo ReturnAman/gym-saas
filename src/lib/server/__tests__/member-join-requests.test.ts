@@ -18,6 +18,7 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
   interface State {
     users: Row[];
     members: Row[];
+    memberships: Row[];
     challenges: Row[];
     joinRequests: Row[];
     auditLogs: Row[];
@@ -26,6 +27,7 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
   const state: State = {
     users: [],
     members: [],
+    memberships: [],
     challenges: [],
     joinRequests: [],
     auditLogs: [],
@@ -103,12 +105,48 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
       state.joinRequests.push(row);
       return row;
     },
+    updateMany: async (args: {
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => {
+      let count = 0;
+      for (const row of state.joinRequests) {
+        if (matches(row, args.where)) {
+          Object.assign(row, args.data);
+          count++;
+        }
+      }
+      return { count };
+    },
+    update: async (args: {
+      where: { id: string };
+      data: Record<string, unknown>;
+    }) => {
+      const row = state.joinRequests.find((r) => r.id === args.where.id);
+      if (!row) throw new Error("join request row missing in fake");
+      Object.assign(row, args.data);
+      return row;
+    },
   };
 
   const tx = {
     // The per-phone advisory lock is a no-op in the fake: its
     // serialized transactions already linearize submissions.
     $executeRaw: async () => 1,
+    // The decider revalidation's locked raw read: the fake ignores
+    // the SQL text and answers from the interpolated (userId,
+    // organizationId) values against orgMemberships state.
+    $queryRaw: async (
+      _strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const [userId, organizationId] = values;
+      return state.orgMemberships
+        .filter(
+          (m) => m.userId === userId && m.organizationId === organizationId,
+        )
+        .map((m) => ({ role: m.role }));
+    },
     memberOtpChallenge: {
       updateMany: async (args: {
         where: Record<string, unknown>;
@@ -150,6 +188,35 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
         state.members.filter((r) => matches(r, args.where)),
       findFirst: async (args: { where: Record<string, unknown> }) =>
         state.members.find((r) => matches(r, args.where)) ?? null,
+      create: async (args: { data: Record<string, unknown> }) => {
+        const row = { id: nextId("member"), ...args.data };
+        state.members.push(row);
+        return row;
+      },
+      update: async (args: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => {
+        const row = state.members.find((r) => r.id === args.where.id);
+        if (!row) throw new Error("member row missing in fake");
+        Object.assign(row, args.data);
+        return row;
+      },
+    },
+    membership: {
+      count: async (args: { where: Record<string, unknown> }) =>
+        state.memberships.filter((r) => matches(r, args.where)).length,
+      create: async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: nextId("membership"),
+          ...args.data,
+          // String form, like the join-request fee: a real Decimal in
+          // state would defeat the transaction snapshot.
+          fee: String(args.data.fee),
+        };
+        state.memberships.push(row);
+        return row;
+      },
     },
     memberJoinRequest: joinRequestOps,
     auditLog: {
@@ -173,6 +240,7 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
         } catch (error) {
           state.users = snapshot.users;
           state.members = snapshot.members;
+          state.memberships = snapshot.memberships;
           state.challenges = snapshot.challenges;
           state.joinRequests = snapshot.joinRequests;
           state.auditLogs = snapshot.auditLogs;
@@ -197,6 +265,7 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
   function resetFake() {
     state.users = [];
     state.members = [];
+    state.memberships = [];
     state.challenges = [];
     state.joinRequests = [];
     state.auditLogs = [];
@@ -213,10 +282,15 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
 vi.mock("@/lib/server/db", () => ({ db: fakeDb }));
 
 import {
+  MemberJoinRequestAlreadyDecidedError,
   MemberJoinRequestAuthorizationError,
+  MemberJoinRequestDecisionConflictError,
   MemberJoinRequestError,
+  MemberJoinRequestNotFoundError,
   MemberJoinRequestValidationError,
+  approveJoinRequest,
   listPendingJoinRequests,
+  rejectJoinRequest,
   submitJoinRequest,
 } from "@/lib/server/member-join-requests";
 
@@ -604,5 +678,319 @@ describe("listPendingJoinRequests — staff queue scope and roles", () => {
     const { requests, totalPending } = await listPendingJoinRequests("owner-1");
     expect(requests).toHaveLength(100);
     expect(totalPending).toBe(105);
+  });
+});
+
+describe("decisions (Slice 2) — approve / reject against the fake", () => {
+  const TERMS = { plan: "MONTHLY", fee: "1500", startDate: "2026-11-01" };
+
+  function seedDecider(
+    userId: string,
+    role: string,
+    organizationId: string = ORG_A,
+  ) {
+    state.orgMemberships.push({
+      id: `om-${userId}-${organizationId}`,
+      userId,
+      organizationId,
+      role,
+    });
+  }
+
+  function seedPendingRequest(overrides: Record<string, unknown> = {}) {
+    const request = {
+      id: "request-1",
+      organizationId: ORG_A,
+      userId: "requester-1",
+      phoneNumber: PHONE,
+      name: "New Person",
+      requestedPlan: "MONTHLY",
+      // String form, per the fake's convention: a real Decimal in
+      // state would defeat the transaction snapshot (structuredClone).
+      proposedFee: "1500",
+      proposedStartDate: new Date(Date.UTC(2026, 10, 1)),
+      status: "PENDING",
+      decidedByUserId: null,
+      decidedAt: null,
+      resultingMemberId: null,
+      createdAt: new Date(Date.UTC(2026, 9, 17)),
+      updatedAt: new Date(Date.UTC(2026, 9, 17)),
+      ...overrides,
+    };
+    state.joinRequests.push(request);
+    return request;
+  }
+
+  it("validates the confirmed terms before opening a transaction", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    const cases: [Record<string, string>, string][] = [
+      [{ plan: "WEEKLY" }, "plan"],
+      [{ plan: "" }, "plan"],
+      [{ fee: "abc" }, "fee"],
+      [{ fee: "-5" }, "fee"],
+      [{ startDate: "" }, "startDate"],
+      [{ startDate: "2026-02-30" }, "startDate"],
+    ];
+    for (const [overrides, field] of cases) {
+      const error = await approveJoinRequest("owner-1", "request-1", {
+        ...TERMS,
+        ...overrides,
+      }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MemberJoinRequestValidationError);
+      expect(
+        typeof (error as MemberJoinRequestValidationError).fields[
+          field as "plan" | "fee" | "startDate"
+        ],
+      ).toBe("string");
+    }
+    expect(flags.transactionCalls).toBe(0);
+    expect(state.joinRequests[0]?.status).toBe("PENDING");
+    expect(state.members).toHaveLength(0);
+    expect(state.memberships).toHaveLength(0);
+  });
+
+  it("approves by creating the member, first membership, and audit atomically", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+
+    const result = await approveJoinRequest("owner-1", "request-1", TERMS);
+    expect(result.adoptedExistingMember).toBe(false);
+    expect(result.requestId).toBe("request-1");
+
+    const member = state.members[0];
+    expect(member).toMatchObject({
+      organizationId: ORG_A,
+      name: "New Person",
+      phoneNumber: PHONE,
+      userId: "requester-1",
+    });
+    expect(result.memberId).toBe(member?.id);
+
+    const membership = state.memberships[0];
+    expect(membership).toMatchObject({
+      organizationId: ORG_A,
+      memberId: member?.id,
+      plan: "MONTHLY",
+    });
+    expect(String(membership?.fee)).toBe("1500");
+    expect((membership?.startDate as Date).toISOString()).toBe(
+      "2026-11-01T00:00:00.000Z",
+    );
+    // Expiry derived by the shared rule: start + one calendar month.
+    expect((membership?.expiryDate as Date).toISOString()).toBe(
+      "2026-12-01T00:00:00.000Z",
+    );
+    expect(result.membershipId).toBe(membership?.id);
+
+    const request = state.joinRequests[0];
+    expect(request).toMatchObject({
+      status: "APPROVED",
+      decidedByUserId: "owner-1",
+      resultingMemberId: member?.id,
+    });
+    expect(request?.decidedAt).toBeInstanceOf(Date);
+
+    expect(state.auditLogs).toHaveLength(1);
+    expect(state.auditLogs[0]).toMatchObject({
+      organizationId: ORG_A,
+      actorUserId: "owner-1",
+      event: "MEMBER_JOIN_REQUEST_APPROVED",
+      targetType: "MemberJoinRequest",
+      targetId: "request-1",
+    });
+    const metadata = state.auditLogs[0]?.metadata as Record<string, unknown>;
+    expect(metadata).toMatchObject({
+      memberId: member?.id,
+      plan: "MONTHLY",
+      feePaise: 150000,
+      adoptedExistingMember: false,
+    });
+  });
+
+  it("derives the expiry with the month-end clamp (Jan 31 + MONTHLY → Feb 28)", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    await approveJoinRequest("owner-1", "request-1", {
+      plan: "MONTHLY",
+      fee: "1500",
+      startDate: "2027-01-31",
+    });
+    expect((state.memberships[0]?.expiryDate as Date).toISOString()).toBe(
+      "2027-02-28T00:00:00.000Z",
+    );
+  });
+
+  it("adopts the single unlinked record without touching its name", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    const existing = seedMember({ name: "Staff Recorded Name" });
+
+    const result = await approveJoinRequest("owner-1", "request-1", TERMS);
+    expect(result.adoptedExistingMember).toBe(true);
+    expect(result.memberId).toBe(existing.id);
+    expect(state.members).toHaveLength(1);
+    expect(state.members[0]).toMatchObject({
+      id: existing.id,
+      name: "Staff Recorded Name",
+      userId: "requester-1",
+    });
+  });
+
+  it("approves against the record already linked to the requester", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    const existing = seedMember({ userId: "requester-1" });
+
+    const result = await approveJoinRequest("owner-1", "request-1", TERMS);
+    expect(result.adoptedExistingMember).toBe(false);
+    expect(result.memberId).toBe(existing.id);
+    expect(state.members).toHaveLength(1);
+    expect(state.memberships).toHaveLength(1);
+  });
+
+  it("conflicts when the phone's record is linked to another user; request stays PENDING", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    seedMember({ userId: "someone-else" });
+
+    const error = await approveJoinRequest(
+      "owner-1",
+      "request-1",
+      TERMS,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MemberJoinRequestDecisionConflictError);
+    expect(
+      (error as MemberJoinRequestDecisionConflictError).reason,
+    ).toBe("member_linked_elsewhere");
+    expect(state.joinRequests[0]?.status).toBe("PENDING");
+    expect(state.memberships).toHaveLength(0);
+    expect(state.auditLogs).toHaveLength(0);
+  });
+
+  it("conflicts on duplicate unlinked records instead of merging them", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    seedMember({ name: "Dup One" });
+    seedMember({ name: "Dup Two" });
+
+    const error = await approveJoinRequest(
+      "owner-1",
+      "request-1",
+      TERMS,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MemberJoinRequestDecisionConflictError);
+    expect(
+      (error as MemberJoinRequestDecisionConflictError).reason,
+    ).toBe("duplicate_member_records");
+    expect(state.members.every((m) => m.userId === null)).toBe(true);
+    expect(state.joinRequests[0]?.status).toBe("PENDING");
+  });
+
+  it("conflicts when the member already has a membership (D2)", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    const existing = seedMember({ userId: "requester-1" });
+    state.memberships.push({
+      id: "membership-existing",
+      organizationId: ORG_A,
+      memberId: existing.id,
+    });
+
+    const error = await approveJoinRequest(
+      "owner-1",
+      "request-1",
+      TERMS,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MemberJoinRequestDecisionConflictError);
+    expect(
+      (error as MemberJoinRequestDecisionConflictError).reason,
+    ).toBe("member_has_membership");
+    expect(state.memberships).toHaveLength(1);
+    expect(state.joinRequests[0]?.status).toBe("PENDING");
+    expect(state.auditLogs).toHaveLength(0);
+  });
+
+  it("hides foreign and nonexistent requests behind the same not-found error", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest({ id: "request-b", organizationId: ORG_B });
+
+    await expect(
+      approveJoinRequest("owner-1", "request-b", TERMS),
+    ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+    await expect(
+      approveJoinRequest("owner-1", "no-such-request", TERMS),
+    ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+    await expect(
+      rejectJoinRequest("owner-1", "request-b"),
+    ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+  });
+
+  it("denies TRAINER and MEMBER deciders; the request stays PENDING", async () => {
+    for (const role of ["TRAINER", "MEMBER"]) {
+      resetFake();
+      seedDecider("decider-1", role);
+      seedPendingRequest();
+      await expect(
+        approveJoinRequest("decider-1", "request-1", TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+      await expect(
+        rejectJoinRequest("decider-1", "request-1"),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+      expect(state.joinRequests[0]?.status).toBe("PENDING");
+    }
+  });
+
+  it("rejects with decision fields and audit, creating nothing", async () => {
+    seedDecider("staff-1", "STAFF");
+    seedPendingRequest();
+
+    const result = await rejectJoinRequest("staff-1", "request-1");
+    expect(result).toEqual({ requestId: "request-1" });
+    const request = state.joinRequests[0];
+    expect(request).toMatchObject({
+      status: "REJECTED",
+      decidedByUserId: "staff-1",
+      resultingMemberId: null,
+    });
+    expect(request?.decidedAt).toBeInstanceOf(Date);
+    expect(state.members).toHaveLength(0);
+    expect(state.memberships).toHaveLength(0);
+    expect(state.auditLogs).toHaveLength(1);
+    expect(state.auditLogs[0]).toMatchObject({
+      actorUserId: "staff-1",
+      event: "MEMBER_JOIN_REQUEST_REJECTED",
+      targetId: "request-1",
+    });
+  });
+
+  it("a second decision on a decided request fails as already-decided", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    await approveJoinRequest("owner-1", "request-1", TERMS);
+
+    await expect(
+      approveJoinRequest("owner-1", "request-1", TERMS),
+    ).rejects.toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+    await expect(
+      rejectJoinRequest("owner-1", "request-1"),
+    ).rejects.toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+    expect(state.members).toHaveLength(1);
+    expect(state.memberships).toHaveLength(1);
+    expect(state.auditLogs).toHaveLength(1);
+  });
+
+  it("an audit failure rolls the whole approval back (atomicity)", async () => {
+    seedDecider("owner-1", "OWNER");
+    seedPendingRequest();
+    flags.failAudit = true;
+
+    await expect(
+      approveJoinRequest("owner-1", "request-1", TERMS),
+    ).rejects.toThrow("audit write failed");
+    expect(state.joinRequests[0]?.status).toBe("PENDING");
+    expect(state.joinRequests[0]?.resultingMemberId).toBeNull();
+    expect(state.members).toHaveLength(0);
+    expect(state.memberships).toHaveLength(0);
   });
 });

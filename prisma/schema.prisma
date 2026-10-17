@@ -633,7 +633,8 @@ model MemberJoinRequest {
   proposedFee       Decimal                 @map("proposed_fee") @db.Decimal(12, 2)
   proposedStartDate DateTime                @map("proposed_start_date") @db.Date
   status            MemberJoinRequestStatus @default(PENDING)
-  // Lifecycle fields — written only by the future approval slice.
+  // Lifecycle fields — written only by the staff decision (Slice 2),
+  // in the same transaction as the decision itself.
   decidedByUserId   String?                 @map("decided_by_user_id")
   decidedAt         DateTime?               @map("decided_at") @db.Timestamptz(6)
   resultingMemberId String?                 @map("resulting_member_id")
@@ -642,7 +643,7 @@ model MemberJoinRequest {
 
   organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user            User         @relation("JoinRequestSubmitter", fields: [userId], references: [id], onDelete: Cascade)
-  resultingMember Member?      @relation("JoinRequestResult", fields: [organizationId, resultingMemberId], references: [organizationId, id], onDelete: SetNull)
+  resultingMember Member?      @relation("JoinRequestResult", fields: [organizationId, resultingMemberId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, id])
   @@index([organizationId, status, createdAt])

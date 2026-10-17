@@ -7,12 +7,21 @@ import { Prisma } from "@prisma/client";
 
 import { db } from "@/lib/server/db";
 import {
+  MemberJoinRequestAlreadyDecidedError,
   MemberJoinRequestAuthorizationError,
+  MemberJoinRequestDecisionConflictError,
   MemberJoinRequestError,
+  MemberJoinRequestNotFoundError,
   MemberJoinRequestValidationError,
+  approveJoinRequest,
   listPendingJoinRequests,
+  rejectJoinRequest,
   submitJoinRequest,
 } from "@/lib/server/member-join-requests";
+import {
+  MemberDuplicateError,
+  createMemberWithMembership,
+} from "@/lib/server/members";
 
 const repoRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -66,6 +75,29 @@ describe("member join request schema", () => {
     );
     expect(schema).toMatch(/@@index\(\[organizationId, status, createdAt\]\)/);
     expect(schema).toMatch(/@@unique\(\[organizationId, id\]\)/);
+  });
+});
+
+describe("member join request decision schema (Slice 2)", () => {
+  const restrictMigrationSql = readFileSync(
+    path.join(
+      repoRoot,
+      "prisma/migrations/20261017130000_restrict_join_request_result_member_fk/migration.sql",
+    ),
+    "utf8",
+  );
+  const schema = readFileSync(SCHEMA_PATH, "utf8");
+
+  it("replaces the resulting-member FK with ON DELETE RESTRICT", () => {
+    expect(restrictMigrationSql).toMatch(
+      /DROP CONSTRAINT "member_join_requests_organization_id_resulting_member_id_fkey"/,
+    );
+    expect(restrictMigrationSql).toMatch(
+      /ADD CONSTRAINT "member_join_requests_organization_id_resulting_member_id_fkey" FOREIGN KEY \("organization_id", "resulting_member_id"\) REFERENCES "members"\("organization_id", "id"\) ON DELETE RESTRICT/,
+    );
+    expect(schema).toMatch(
+      /"JoinRequestResult"[\s\S]*?onDelete: Restrict/,
+    );
   });
 });
 
@@ -574,6 +606,858 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       await expect(
         listPendingJoinRequests(outsider.id),
       ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+    });
+  },
+);
+
+describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
+  "member join request decisions (database)",
+  () => {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const createdOrgIds: string[] = [];
+    const createdUserIds: string[] = [];
+    let phoneCounter = 100;
+
+    function nextPhone(): string {
+      phoneCounter += 1;
+      return `97${String(phoneCounter).padStart(8, "0")}`;
+    }
+
+    async function seedUser(tag: string, phone?: string) {
+      const user = await db.user.create({
+        data: {
+          clerkUserId: `join-dec-${tag}-${suffix}`,
+          ...(phone ? { phoneNumber: phone } : {}),
+        },
+        select: { id: true },
+      });
+      createdUserIds.push(user.id);
+      return user;
+    }
+
+    async function seedGym(tag: string) {
+      const org = await db.organization.create({
+        data: { name: `Decision Gym ${tag} ${suffix}` },
+        select: { id: true },
+      });
+      createdOrgIds.push(org.id);
+      const owner = await seedUser(`owner-${tag}`);
+      await db.organizationMembership.create({
+        data: { userId: owner.id, organizationId: org.id, role: "OWNER" },
+      });
+      return { org, owner };
+    }
+
+    async function seedStaff(
+      orgId: string,
+      tag: string,
+      role: "ADMIN" | "STAFF" | "TRAINER",
+    ) {
+      const user = await seedUser(`staff-${tag}`);
+      await db.organizationMembership.create({
+        data: { userId: user.id, organizationId: orgId, role },
+      });
+      return user;
+    }
+
+    /** A PENDING request exactly as Slice 1 submission persists it. */
+    async function seedPendingRequest(
+      orgId: string,
+      phone: string,
+      overrides: { name?: string } = {},
+    ) {
+      const requester = await seedUser(`requester-${phone}`, phone);
+      const request = await db.memberJoinRequest.create({
+        data: {
+          organizationId: orgId,
+          userId: requester.id,
+          phoneNumber: phone,
+          name: overrides.name ?? "New Person",
+          requestedPlan: "MONTHLY",
+          proposedFee: new Prisma.Decimal("1500"),
+          proposedStartDate: new Date(Date.UTC(2026, 10, 1)),
+          status: "PENDING",
+        },
+        select: { id: true, userId: true },
+      });
+      return { request, requester };
+    }
+
+    const TERMS = { plan: "MONTHLY", fee: "1500", startDate: "2026-11-01" };
+
+    async function decisionAudits(orgId: string) {
+      return db.auditLog.findMany({
+        where: {
+          organizationId: orgId,
+          event: {
+            in: [
+              "MEMBER_JOIN_REQUEST_APPROVED",
+              "MEMBER_JOIN_REQUEST_REJECTED",
+            ],
+          },
+        },
+      });
+    }
+
+    beforeAll(async () => {
+      await db.$queryRaw`SELECT 1`;
+    });
+
+    afterAll(async () => {
+      if (createdOrgIds.length > 0) {
+        await db.organization.deleteMany({
+          where: { id: { in: createdOrgIds } },
+        });
+      }
+      if (createdUserIds.length > 0) {
+        await db.user.deleteMany({
+          where: { id: { in: createdUserIds } },
+        });
+      }
+      await db.$disconnect();
+    });
+
+    it("approve-by-create: member, membership, decision fields, and audit land atomically; no payment anywhere", async () => {
+      const { org, owner } = await seedGym("D1");
+      const phone = nextPhone();
+      const { request, requester } = await seedPendingRequest(org.id, phone);
+
+      const result = await approveJoinRequest(owner.id, request.id, TERMS);
+      expect(result.adoptedExistingMember).toBe(false);
+
+      const member = await db.member.findUnique({
+        where: { id: result.memberId },
+      });
+      expect(member).toMatchObject({
+        organizationId: org.id,
+        name: "New Person",
+        phoneNumber: phone,
+        userId: requester.id,
+      });
+
+      const membership = await db.membership.findUnique({
+        where: { id: result.membershipId },
+      });
+      expect(membership).toMatchObject({
+        organizationId: org.id,
+        memberId: result.memberId,
+        plan: "MONTHLY",
+      });
+      expect(membership?.fee.equals(new Prisma.Decimal("1500"))).toBe(true);
+      expect(membership?.startDate.toISOString()).toBe(
+        "2026-11-01T00:00:00.000Z",
+      );
+      // Derived expiry: start + one calendar month (the shared rule).
+      expect(membership?.expiryDate.toISOString()).toBe(
+        "2026-12-01T00:00:00.000Z",
+      );
+      // The fee is fully outstanding: approval created no payment, so
+      // the derived balance is the fee itself.
+      expect(
+        await db.payment.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      expect(
+        await db.paymentClaim.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+
+      const decided = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(decided).toMatchObject({
+        status: "APPROVED",
+        decidedByUserId: owner.id,
+        resultingMemberId: result.memberId,
+      });
+      expect(decided?.decidedAt).not.toBeNull();
+
+      const audits = await decisionAudits(org.id);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        event: "MEMBER_JOIN_REQUEST_APPROVED",
+        actorUserId: owner.id,
+        targetType: "MemberJoinRequest",
+        targetId: request.id,
+      });
+      expect(audits[0]?.metadata).toMatchObject({
+        memberId: result.memberId,
+        membershipId: result.membershipId,
+        plan: "MONTHLY",
+        feePaise: 150000,
+        adoptedExistingMember: false,
+      });
+    });
+
+    it("approve end-to-end: a submitted request becomes a member with the staff-confirmed terms, not the proposed ones", async () => {
+      const { org, owner } = await seedGym("D2");
+      const phone = nextPhone();
+      const challenge = await db.memberOtpChallenge.create({
+        data: {
+          organizationId: org.id,
+          phoneNumber: phone,
+          providerSessionId: `join-dec-e2e-${suffix}`,
+          status: "VERIFIED",
+          expiresAt: new Date(Date.now() + 5 * 60_000),
+          verifiedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      const submitted = await submitJoinRequest({
+        organizationId: org.id,
+        challengeId: challenge.id,
+        name: "Walk In",
+        requestedPlan: "MONTHLY",
+        proposedFee: "1500",
+        proposedStartDate: "2026-11-01",
+      });
+      expect(submitted.status).toBe("created");
+      const requestId =
+        submitted.status === "created" ? submitted.requestId : "";
+
+      // Staff confirm DIFFERENT terms than proposed.
+      const result = await approveJoinRequest(owner.id, requestId, {
+        plan: "THREE_MONTHS",
+        fee: "4000",
+        startDate: "2026-11-05",
+      });
+      const membership = await db.membership.findUnique({
+        where: { id: result.membershipId },
+      });
+      expect(membership?.plan).toBe("THREE_MONTHS");
+      expect(membership?.fee.equals(new Prisma.Decimal("4000"))).toBe(true);
+      expect(membership?.startDate.toISOString()).toBe(
+        "2026-11-05T00:00:00.000Z",
+      );
+      expect(membership?.expiryDate.toISOString()).toBe(
+        "2027-02-05T00:00:00.000Z",
+      );
+    });
+
+    it("approve-by-adopt: the unlinked record is linked, not duplicated, name untouched", async () => {
+      const { org, owner } = await seedGym("D3");
+      const phone = nextPhone();
+      const { request, requester } = await seedPendingRequest(org.id, phone);
+      const existing = await db.member.create({
+        data: {
+          organizationId: org.id,
+          name: "Staff Spelling",
+          phoneNumber: phone,
+        },
+        select: { id: true },
+      });
+
+      const result = await approveJoinRequest(owner.id, request.id, TERMS);
+      expect(result.adoptedExistingMember).toBe(true);
+      expect(result.memberId).toBe(existing.id);
+      expect(
+        await db.member.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      const adopted = await db.member.findUnique({
+        where: { id: existing.id },
+      });
+      expect(adopted).toMatchObject({
+        name: "Staff Spelling",
+        userId: requester.id,
+      });
+    });
+
+    it("approve uses the record already linked to the requester", async () => {
+      const { org, owner } = await seedGym("D4");
+      const phone = nextPhone();
+      const { request, requester } = await seedPendingRequest(org.id, phone);
+      const existing = await db.member.create({
+        data: {
+          organizationId: org.id,
+          name: "Already Linked",
+          phoneNumber: phone,
+          userId: requester.id,
+        },
+        select: { id: true },
+      });
+
+      const result = await approveJoinRequest(owner.id, request.id, TERMS);
+      expect(result.memberId).toBe(existing.id);
+      expect(result.adoptedExistingMember).toBe(false);
+      expect(
+        await db.member.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+    });
+
+    it("reject: decision fields + audit only; zero members, memberships, payments", async () => {
+      const { org, owner } = await seedGym("D5");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+
+      const result = await rejectJoinRequest(owner.id, request.id);
+      expect(result).toEqual({ requestId: request.id });
+
+      const decided = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(decided).toMatchObject({
+        status: "REJECTED",
+        decidedByUserId: owner.id,
+        resultingMemberId: null,
+      });
+      expect(decided?.decidedAt).not.toBeNull();
+      expect(
+        await db.member.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      expect(
+        await db.payment.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      expect(
+        await db.paymentClaim.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      const audits = await decisionAudits(org.id);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({
+        event: "MEMBER_JOIN_REQUEST_REJECTED",
+        actorUserId: owner.id,
+        targetId: request.id,
+      });
+    });
+
+    it("conflict: phone's record linked to another user aborts — request stays PENDING, zero writes", async () => {
+      const { org, owner } = await seedGym("D6");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+      const other = await seedUser("other-d6");
+      await db.member.create({
+        data: {
+          organizationId: org.id,
+          name: "Someone Else",
+          phoneNumber: phone,
+          userId: other.id,
+        },
+      });
+
+      const error = await approveJoinRequest(
+        owner.id,
+        request.id,
+        TERMS,
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(
+        MemberJoinRequestDecisionConflictError,
+      );
+      expect(
+        (error as MemberJoinRequestDecisionConflictError).reason,
+      ).toBe("member_linked_elsewhere");
+
+      const after = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(after?.status).toBe("PENDING");
+      expect(after?.resultingMemberId).toBeNull();
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(0);
+      expect(await decisionAudits(org.id)).toHaveLength(0);
+    });
+
+    it("conflict: duplicate unlinked records abort instead of merging", async () => {
+      const { org, owner } = await seedGym("D7");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+      await db.member.create({
+        data: { organizationId: org.id, name: "Dup One", phoneNumber: phone },
+      });
+      await db.member.create({
+        data: { organizationId: org.id, name: "Dup Two", phoneNumber: phone },
+      });
+
+      const error = await approveJoinRequest(
+        owner.id,
+        request.id,
+        TERMS,
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(
+        MemberJoinRequestDecisionConflictError,
+      );
+      expect(
+        (error as MemberJoinRequestDecisionConflictError).reason,
+      ).toBe("duplicate_member_records");
+      expect(
+        await db.member.count({
+          where: { organizationId: org.id, userId: { not: null } },
+        }),
+      ).toBe(0);
+      const after = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(after?.status).toBe("PENDING");
+    });
+
+    it("conflict: a member who already has a membership blocks approval (D2)", async () => {
+      const { org, owner } = await seedGym("D8");
+      const phone = nextPhone();
+      const { request, requester } = await seedPendingRequest(org.id, phone);
+      const existing = await db.member.create({
+        data: {
+          organizationId: org.id,
+          name: "Has Membership",
+          phoneNumber: phone,
+          userId: requester.id,
+        },
+        select: { id: true },
+      });
+      await db.membership.create({
+        data: {
+          organizationId: org.id,
+          memberId: existing.id,
+          plan: "MONTHLY",
+          startDate: new Date(Date.UTC(2026, 10, 1)),
+          expiryDate: new Date(Date.UTC(2026, 11, 1)),
+          fee: new Prisma.Decimal("1500"),
+        },
+      });
+
+      const error = await approveJoinRequest(
+        owner.id,
+        request.id,
+        TERMS,
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(
+        MemberJoinRequestDecisionConflictError,
+      );
+      expect(
+        (error as MemberJoinRequestDecisionConflictError).reason,
+      ).toBe("member_has_membership");
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      const after = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(after?.status).toBe("PENDING");
+      expect(await decisionAudits(org.id)).toHaveLength(0);
+    });
+
+    it("tenant isolation: a foreign request is indistinguishable from a nonexistent one; staff of that gym CAN decide it", async () => {
+      const { org: orgA, owner: ownerA } = await seedGym("D9A");
+      const { org: orgB } = await seedGym("D9B");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(orgB.id, phone);
+
+      // ownerA has no membership in orgB: same error as a random ID.
+      await expect(
+        approveJoinRequest(ownerA.id, request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+      await expect(
+        rejectJoinRequest(ownerA.id, request.id),
+      ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+      await expect(
+        approveJoinRequest(ownerA.id, crypto.randomUUID(), TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+      const untouched = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(untouched?.status).toBe("PENDING");
+      expect(
+        await db.member.count({ where: { organizationId: orgB.id } }),
+      ).toBe(0);
+
+      // The same person, as ADMIN of orgB, decides it there: the
+      // request's own gym scopes the decision, not the primary gym.
+      await db.organizationMembership.create({
+        data: { userId: ownerA.id, organizationId: orgB.id, role: "ADMIN" },
+      });
+      const result = await approveJoinRequest(ownerA.id, request.id, TERMS);
+      expect(result.memberId).toBeTruthy();
+      const decided = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(decided?.status).toBe("APPROVED");
+      // Nothing leaked into orgA.
+      expect(
+        await db.member.count({ where: { organizationId: orgA.id } }),
+      ).toBe(0);
+    });
+
+    it("authorization: TRAINER cannot decide; a removed or demoted actor is stopped by revalidation", async () => {
+      const { org } = await seedGym("D10");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+      const trainer = await seedStaff(org.id, "trainer-d10", "TRAINER");
+      await expect(
+        approveJoinRequest(trainer.id, request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+      await expect(
+        rejectJoinRequest(trainer.id, request.id),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+
+      // Demotion committed before the decision: the locked in-tx
+      // revalidation sees TRAINER and denies (the claims pattern).
+      const staff = await seedStaff(org.id, "staff-d10", "STAFF");
+      await db.organizationMembership.updateMany({
+        where: { userId: staff.id, organizationId: org.id },
+        data: { role: "TRAINER" },
+      });
+      await expect(
+        approveJoinRequest(staff.id, request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAuthorizationError);
+
+      // Removal committed before the decision: no row in this gym —
+      // the indistinguishable not-found outcome.
+      const admin = await seedStaff(org.id, "admin-d10", "ADMIN");
+      await db.organizationMembership.deleteMany({
+        where: { userId: admin.id, organizationId: org.id },
+      });
+      await expect(
+        approveJoinRequest(admin.id, request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestNotFoundError);
+
+      const after = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      expect(after?.status).toBe("PENDING");
+      expect(await decisionAudits(org.id)).toHaveLength(0);
+    });
+
+    it("double decision: approve then reject (and reject then approve) fail as already-decided with a single audit", async () => {
+      const { org, owner } = await seedGym("D11");
+      const phoneA = nextPhone();
+      const first = await seedPendingRequest(org.id, phoneA);
+      await approveJoinRequest(owner.id, first.request.id, TERMS);
+      await expect(
+        rejectJoinRequest(owner.id, first.request.id),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+      await expect(
+        approveJoinRequest(owner.id, first.request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+
+      const phoneB = nextPhone();
+      const second = await seedPendingRequest(org.id, phoneB);
+      await rejectJoinRequest(owner.id, second.request.id);
+      await expect(
+        approveJoinRequest(owner.id, second.request.id, TERMS),
+      ).rejects.toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+
+      expect(await decisionAudits(org.id)).toHaveLength(2);
+      expect(
+        await db.member.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+    });
+
+    it("concurrency: two parallel approvals produce exactly one member, one membership, one audit", async () => {
+      const { org, owner } = await seedGym("D12");
+      const staff = await seedStaff(org.id, "staff-d12", "STAFF");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+
+      const results = await Promise.allSettled([
+        approveJoinRequest(owner.id, request.id, TERMS),
+        approveJoinRequest(staff.id, request.id, TERMS),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(
+        (rejected[0] as PromiseRejectedResult).reason,
+      ).toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+
+      expect(
+        await db.member.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      expect(
+        await db.membership.count({ where: { organizationId: org.id } }),
+      ).toBe(1);
+      const audits = await decisionAudits(org.id);
+      expect(audits).toHaveLength(1);
+      expect(audits[0]?.event).toBe("MEMBER_JOIN_REQUEST_APPROVED");
+    });
+
+    it("concurrency: approve racing reject lands exactly one decision", async () => {
+      const { org, owner } = await seedGym("D13");
+      const staff = await seedStaff(org.id, "staff-d13", "STAFF");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+
+      const results = await Promise.allSettled([
+        approveJoinRequest(owner.id, request.id, TERMS),
+        rejectJoinRequest(staff.id, request.id),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(
+        (rejected[0] as PromiseRejectedResult).reason,
+      ).toBeInstanceOf(MemberJoinRequestAlreadyDecidedError);
+
+      const decided = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      const audits = await decisionAudits(org.id);
+      expect(audits).toHaveLength(1);
+      if (decided?.status === "APPROVED") {
+        expect(audits[0]?.event).toBe("MEMBER_JOIN_REQUEST_APPROVED");
+        expect(
+          await db.membership.count({ where: { organizationId: org.id } }),
+        ).toBe(1);
+        expect(decided.resultingMemberId).not.toBeNull();
+      } else {
+        expect(decided?.status).toBe("REJECTED");
+        expect(audits[0]?.event).toBe("MEMBER_JOIN_REQUEST_REJECTED");
+        expect(
+          await db.member.count({ where: { organizationId: org.id } }),
+        ).toBe(0);
+      }
+    });
+
+    it("concurrency: approval vs staff creation for the same phone — exactly one wins; one member, one membership (3 rounds)", async () => {
+      // Both critical sections hold the same (gym, phone) advisory
+      // lock, and the staff duplicate check runs inside the creation
+      // transaction under that lock — so the two operations fully
+      // linearize and exactly one of them can commit. (This replaces
+      // the looser race assertions from the original Slice 2 pass,
+      // which tolerated a duplicate member pair because the staff
+      // pre-check ran before the transaction.)
+      for (let round = 0; round < 3; round += 1) {
+        const { org, owner } = await seedGym(`C1-${round}`);
+        const phone = nextPhone();
+        const { request, requester } = await seedPendingRequest(org.id, phone);
+
+        const [approveResult, createResult] = await Promise.allSettled([
+          approveJoinRequest(owner.id, request.id, TERMS),
+          createMemberWithMembership(owner.id, {
+            name: "Staff Created",
+            phoneNumber: phone,
+            fee: "1500",
+            plan: "MONTHLY",
+            startDate: "2026-11-01",
+          }),
+        ]);
+
+        const fulfilled = [approveResult, createResult].filter(
+          (r) => r.status === "fulfilled",
+        );
+        expect(fulfilled).toHaveLength(1);
+
+        // Exactly one member for the phone, exactly one membership
+        // in the gym, and it belongs to that member — never stacked,
+        // never mis-targeted.
+        const members = await db.member.findMany({
+          where: { organizationId: org.id, phoneNumber: phone },
+        });
+        expect(members).toHaveLength(1);
+        const member = members[0];
+        const memberships = await db.membership.findMany({
+          where: { organizationId: org.id },
+        });
+        expect(memberships).toHaveLength(1);
+        expect(memberships[0]?.memberId).toBe(member?.id);
+
+        const decided = await db.memberJoinRequest.findUnique({
+          where: { id: request.id },
+        });
+        if (approveResult.status === "fulfilled") {
+          // Approval won: the request produced the only member, and
+          // the staff creation observed it under the lock and was
+          // refused as a duplicate of exactly that member.
+          expect(createResult.status).toBe("rejected");
+          if (createResult.status === "rejected") {
+            expect(createResult.reason).toBeInstanceOf(MemberDuplicateError);
+            expect(
+              (
+                createResult.reason as MemberDuplicateError
+              ).duplicates.map((d) => d.id),
+            ).toContain(member?.id);
+          }
+          expect(decided?.status).toBe("APPROVED");
+          expect(decided?.resultingMemberId).toBe(member?.id);
+          expect(member?.userId).toBe(requester.id);
+          expect(
+            (await decisionAudits(org.id)).filter(
+              (a) => a.event === "MEMBER_JOIN_REQUEST_APPROVED",
+            ),
+          ).toHaveLength(1);
+        } else {
+          // Staff creation won: approval adopted nothing — the D2
+          // guard saw the staff member's membership and stopped it,
+          // leaving the request pending for a later decision.
+          expect(approveResult.reason).toBeInstanceOf(
+            MemberJoinRequestDecisionConflictError,
+          );
+          expect(
+            (approveResult.reason as MemberJoinRequestDecisionConflictError)
+              .reason,
+          ).toBe("member_has_membership");
+          expect(decided?.status).toBe("PENDING");
+          expect(decided?.resultingMemberId).toBeNull();
+          expect(member?.userId).toBeNull();
+          expect(await decisionAudits(org.id)).toHaveLength(0);
+        }
+        expect(
+          await db.payment.count({ where: { organizationId: org.id } }),
+        ).toBe(0);
+        expect(
+          await db.paymentClaim.count({ where: { organizationId: org.id } }),
+        ).toBe(0);
+      }
+    });
+
+    it("concurrency: approval vs staff creation WITH allowDuplicate — the override still lands; one membership per member", async () => {
+      const { org, owner } = await seedGym("C2");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+
+      const [approveResult, createResult] = await Promise.allSettled([
+        approveJoinRequest(owner.id, request.id, TERMS),
+        createMemberWithMembership(
+          owner.id,
+          {
+            name: "Staff Created",
+            phoneNumber: phone,
+            fee: "1500",
+            plan: "MONTHLY",
+            startDate: "2026-11-01",
+          },
+          { allowDuplicate: true },
+        ),
+      ]);
+
+      // The explicit override skips the duplicate check entirely, so
+      // the staff creation always lands. Approval either wins the
+      // lock first (both succeed — the acknowledged duplicate pair,
+      // each member with its own single membership) or finds the
+      // staff member's membership and stops at the D2 guard.
+      expect(createResult.status).toBe("fulfilled");
+      const members = await db.member.findMany({
+        where: { organizationId: org.id, phoneNumber: phone },
+        include: { memberships: true },
+      });
+      for (const member of members) {
+        expect(member.memberships).toHaveLength(1);
+      }
+      const decided = await db.memberJoinRequest.findUnique({
+        where: { id: request.id },
+      });
+      if (approveResult.status === "fulfilled") {
+        expect(members).toHaveLength(2);
+        const winner = members.find(
+          (m) => m.id === decided?.resultingMemberId,
+        );
+        expect(winner?.memberships).toHaveLength(1);
+        expect(winner?.userId).toBe(decided?.userId);
+        expect(decided?.status).toBe("APPROVED");
+      } else {
+        expect(approveResult.reason).toBeInstanceOf(
+          MemberJoinRequestDecisionConflictError,
+        );
+        expect(
+          (approveResult.reason as MemberJoinRequestDecisionConflictError)
+            .reason,
+        ).toBe("member_has_membership");
+        expect(members).toHaveLength(1);
+        expect(decided?.status).toBe("PENDING");
+        expect(decided?.resultingMemberId).toBeNull();
+      }
+    });
+
+    it("concurrency: two staff creations for the same phone — exactly one succeeds (lives here: no members DB suite exists)", async () => {
+      const { org, owner } = await seedGym("C3");
+      const phone = nextPhone();
+      const input = {
+        name: "Staff Created",
+        phoneNumber: phone,
+        fee: "1500",
+        plan: "MONTHLY",
+        startDate: "2026-11-01",
+      };
+
+      // Both creations take the same advisory lock and run the
+      // duplicate check inside their transactions, so the second to
+      // acquire the lock observes the first's committed member.
+      const results = await Promise.allSettled([
+        createMemberWithMembership(owner.id, input),
+        createMemberWithMembership(owner.id, {
+          ...input,
+          name: "Second Attempt",
+        }),
+      ]);
+      const fulfilled = results.filter((r) => r.status === "fulfilled");
+      const rejected = results.filter((r) => r.status === "rejected");
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(
+        (rejected[0] as PromiseRejectedResult).reason,
+      ).toBeInstanceOf(MemberDuplicateError);
+
+      const members = await db.member.findMany({
+        where: { organizationId: org.id, phoneNumber: phone },
+      });
+      expect(members).toHaveLength(1);
+      const memberships = await db.membership.findMany({
+        where: { organizationId: org.id },
+      });
+      expect(memberships).toHaveLength(1);
+      expect(memberships[0]?.memberId).toBe(members[0]?.id);
+    });
+
+    it("after approval, staff member creation for the same phone is a duplicate; total memberships stay 1", async () => {
+      const { org, owner } = await seedGym("D15");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+
+      const result = await approveJoinRequest(owner.id, request.id, TERMS);
+      await expect(
+        createMemberWithMembership(owner.id, {
+          name: "Staff Created",
+          phoneNumber: phone,
+          fee: "1500",
+          plan: "MONTHLY",
+          startDate: "2026-11-01",
+        }),
+      ).rejects.toBeInstanceOf(MemberDuplicateError);
+
+      const memberships = await db.membership.findMany({
+        where: { organizationId: org.id },
+      });
+      expect(memberships).toHaveLength(1);
+      expect(memberships[0]?.memberId).toBe(result.memberId);
+    });
+
+    it("the resulting-member FK is RESTRICT in the live database: a decided request's member cannot be deleted, an unreferenced one can", async () => {
+      const rows = await db.$queryRaw<{ confdeltype: string }[]>`
+        SELECT confdeltype::text AS confdeltype FROM pg_constraint
+        WHERE conname = 'member_join_requests_organization_id_resulting_member_id_fkey'
+      `;
+      expect(rows[0]?.confdeltype).toBe("r");
+
+      const { org, owner } = await seedGym("D16");
+      const phone = nextPhone();
+      const { request } = await seedPendingRequest(org.id, phone);
+      const result = await approveJoinRequest(owner.id, request.id, TERMS);
+
+      await expect(
+        db.member.delete({ where: { id: result.memberId } }),
+      ).rejects.toThrow();
+      expect(
+        await db.member.findUnique({ where: { id: result.memberId } }),
+      ).not.toBeNull();
+
+      const free = await db.member.create({
+        data: {
+          organizationId: org.id,
+          name: "Unreferenced",
+          phoneNumber: nextPhone(),
+        },
+        select: { id: true },
+      });
+      await db.member.delete({ where: { id: free.id } });
+      expect(
+        await db.member.findUnique({ where: { id: free.id } }),
+      ).toBeNull();
     });
   },
 );

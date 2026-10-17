@@ -1,16 +1,18 @@
 # 20 — CURRENT STATE
 
 **Project:** gym-saas
-**Version:** 0.3 (draft — pending owner approval)
-**Status:** Core feature set implemented and merged to main; not deployed and not ready for public launch.
-**Last Updated:** 2026-10-14
-**Baseline:** `main` @ `57796bd10ef9d42572edba709c8b10d14be34f5a`
-**Latest CI:** run `38447698232` — SUCCESS (build, db-tests, e2e-auth)
+**Version:** 0.6 (draft — pending owner approval)
+**Status:** Core feature set implemented. Everything through `a046fcb` is merged to GitHub `main`; the three newest feature commits are committed on **local `main` only** and have not been pushed. Not deployed and not ready for public launch.
+**Last Updated:** 2026-10-18
+**Baseline:** local `main` @ `1cc6b885ee12702569b75469120f51f64c6d5b50` — the three newest commits (`5f5aedf`, `e8122b1`, `1cc6b88`) are **local only, not yet pushed**; GitHub `main` remains at `a046fcb`.
+**Latest CI:** run `38603651141` on `a046fcb` — SUCCESS (build, db-tests, e2e-auth). CI has **not** run on `5f5aedf`, `e8122b1`, or `1cc6b88`; those commits are verified locally under Node 20.20.2 (§6).
 
-> This draft replaces the 2026-10-01 snapshot, which predates member
-> management, payments, member OTP/sessions, attendance, staff
-> management, and payment claims. Status words used below:
-> **Completed** = implemented, tested, and merged to `main`;
+> This revision replaces the 2026-10-17 snapshot, which predates
+> the join-request decision slice (approve/reject).
+> Status words used below:
+> **Completed** = implemented, tested, and merged to `main`
+> (GitHub `main`, except §4.9, which is committed on local
+> `main` only — see its heading);
 > **Unverified** = code exists but the external integration has never
 > run live; **Not started** = no implementation exists. Nothing in
 > this document claims a deployment, backup, or provider integration
@@ -65,8 +67,12 @@ database, or API documents.
   staff changes, manual attendance).
 - Balances are always derived (sum of confirmed payments against the
   latest membership; outstanding floored at ₹0), never stored.
+- Payment writes are idempotent: a client-generated token, bound to
+  organization and operation and enforced by a database unique
+  constraint, ensures one intentional recording or claim
+  confirmation creates at most one payment (§4.8).
 
-# 4. What is implemented and merged to GitHub main
+# 4. What is implemented and merged to main (§4.1–§4.8: GitHub `main`; §4.9: local `main` only — see its heading)
 
 ## 4.1 Foundation, owner auth, onboarding
 Clerk authentication foundation, organization-owner onboarding, gym
@@ -88,7 +94,11 @@ charge model — the membership fee is the amount due.
 (30-second resend cooldown, 5/phone/hour, 100/org/hour, 5-minute
 challenge TTL, 5 attempts then locked), anti-enumeration responses,
 phone-backed member sessions (SHA-256 token hash only, 30-day
-absolute / 7-day idle expiry), and atomic candidate linking.
+absolute / 7-day idle expiry), and atomic candidate linking. OTP
+issuance is intent-aware: the default (`link`) eligibility rule
+described here is unchanged, and an explicit `join` intent issues
+real challenges to phones with no member record, for the
+join-request flow in §4.9.
 **Unverified:** the live 2Factor wire details have never been
 exercised — no API key has been provisioned and no live OTP
 round-trip has been performed. The OTP endpoints return a safe
@@ -147,10 +157,174 @@ matching; the local `User` record stores no email. UI at
   may verify claims; foreign/nonexistent members still return the
   indistinguishable not-found behavior.
 
+## 4.8 Operational hardening (H1–H4, commits `d190503` + `a046fcb`)
+- **H1 — Database pool configuration:** the Prisma PostgreSQL
+  adapter is built from explicit, validated settings instead of
+  driver defaults: pool max **8 connections**, 5-second
+  pool-acquisition timeout, 30-second idle timeout, 15-second
+  server-side statement timeout. Optional environment overrides
+  (`DB_POOL_MAX`, `DB_POOL_CONNECTION_TIMEOUT_MS`,
+  `DB_POOL_IDLE_TIMEOUT_MS`, `DB_STATEMENT_TIMEOUT_MS`) fail startup
+  when invalid. Sized for a small database connection budget
+  (web 8 + migrations ~2 + operations ~2 within a 20-connection
+  allowance).
+- **H2 — Safe database-failure handling:** Prisma/pg failures are
+  classified (connection loss / pool timeout / statement timeout)
+  and mapped to safe responses: API routes return
+  `503 DATABASE_UNAVAILABLE` without leaking internals, and server
+  actions show a temporary-unavailable message. Payment paths treat
+  a lost connection as *ambiguous* — staff are told to check the
+  member's payment history and balance before recording again, and
+  writes are never retried blindly. Business errors are never
+  relabelled as database failures.
+- **H4 — Payment idempotency:** `recordPayment` and claim
+  confirmation accept a client-minted token (one per form mount),
+  stored on the payment and protected by a unique constraint on
+  `(organization_id, idempotency_key)`. Replaying a token with the
+  same payload returns the original payment with no new payment or
+  audit; replaying it with a different payload is rejected;
+  cross-operation reuse (a direct-payment token in a claim
+  confirmation, or vice versa) is rejected; a fresh token permits a
+  genuinely separate payment of the same amount. Behavior without a
+  token is unchanged.
+- **H3 — Structured logging and correlation IDs:** server-only
+  modules emit one single-line JSON record per failure at response
+  boundaries only (API routes and the three central server-action
+  translators), with the event, boundary, and a validated
+  `x-request-id` correlation ID (untrusted values are rejected and
+  replaced). Redaction is by construction: error messages are never
+  logged and only allowlisted fields are emitted; the logging
+  helpers are non-throwing even for hostile error objects, so
+  logging can never mask the original error. Audit events remain a
+  separate system. Known limit: member create/update, attendance,
+  settings, and onboarding actions have no shared error translator,
+  so their failures are not yet logged (§8).
+
+## 4.9 Member join requests and staff decisions (Slices 1 + 2, commits `5f5aedf`, `e8122b1`, `1cc6b88`) — local main only, not yet pushed
+
+A person who opens a gym's invitation link/QR can now ask to join
+that gym before any member record exists:
+
+- **Submission** (`POST /api/member-auth/join-request`, service
+  `src/lib/server/member-join-requests.ts`): after OTP verification,
+  the person submits name, requested plan, proposed fee, and
+  proposed start date — all required and validated with the shared
+  member-input validators *before* the verified challenge is
+  claimed, so a form error never consumes the challenge. Submission
+  is a single transaction: atomic challenge claim (the identical
+  conditional update linking uses), resolution of the phone-backed
+  `User`, the request row, and a `MEMBER_JOIN_REQUESTED` audit
+  event. The challenge is consumed only when a request is created.
+- **The phone-only User shell is deliberate and bounded:** the
+  audit schema requires an actor (`audit_logs.actor_user_id` is
+  NOT NULL with a user FK), so submission resolves/creates the
+  phone-backed `User` with an upsert whose create carries only
+  the verified phone and whose update is empty — no name, email,
+  Clerk identity, role, `OrganizationMembership`, or session is
+  ever created, and no `Member`, `Membership`, payment, or claim
+  either (all asserted by database tests). The shell grants no
+  authentication or authorization anywhere.
+- **Existing members never produce requests:** the service
+  re-resolves member candidates for the (gym, verified phone)
+  inside the transaction, mirroring linking's partition. Any
+  existing record — linkable, already linked to this user, linked
+  to another user, or duplicated — yields no request row
+  (`ALREADY_REGISTERED` for the caller's own states, the generic
+  failure otherwise). The endpoint, never the UI, decides; the
+  sign-in UI's "Request to join" entry is static and unconditional.
+- **Duplicates:** a partial unique index
+  (`member_join_requests_one_pending_per_phone` on
+  `(organization_id, phone_number) WHERE status = 'PENDING'`)
+  makes a second pending request per gym + phone impossible;
+  concurrent submissions resolve to the existing request (a
+  per-phone advisory lock serializes first-time submissions, and
+  a P2002 from the index resolves to the already-pending outcome).
+- **Queue and decisions** (`/app/org/join-requests`): OWNER /
+  ADMIN / STAFF only (TRAINER excluded — the queue exposes phone
+  numbers of non-members), scope pinned to the actor's own gym,
+  oldest first, capped at 100 with the total pending count shown.
+  A submitted request by itself does not activate a membership,
+  confirm a fee, or record a payment; staff decide each request
+  from the queue (Slice 2, below).
+- **Join-intent OTP eligibility** (commit `e8122b1`):
+  `requestMemberOtp` takes an explicit `intent`. Exactly `"join"`
+  skips the member-row eligibility check and issues a real
+  challenge to any valid phone, so a genuine newcomer can
+  complete OTP; absent, `"link"`, or any unrecognized value keeps
+  the original link-path behaviour byte-identically. Intent
+  selects only the SMS-eligibility rule — never authorization —
+  and the anti-enumeration response contract is unchanged (a
+  real or synthetic `{ challengeId }` in every case). Rate
+  limits count challenge rows regardless of intent, so the
+  30-second cooldown and the 5/phone/hour and 100/gym/hour caps
+  are shared across intents. A VERIFIED challenge is
+  intent-agnostic by design: cross-intent use is neutralized by
+  each consuming endpoint's own revalidation (a newcomer's
+  challenge fails linking generically; a member's challenge at
+  the join endpoint returns `ALREADY_REGISTERED`); challenge
+  purpose-binding was considered and deliberately not
+  implemented. Residual exposure, accepted and recorded: SMS can
+  now be triggered to arbitrary numbers within the caps, and
+  rotating across gyms multiplies the per-gym cap (tracked under
+  M3 in §8). Live 2Factor remains unverified, as in §4.4.
+- **Approve / reject decisions** (Slice 2, commit `1cc6b88`;
+  service functions `approveJoinRequest` / `rejectJoinRequest`):
+  each decision is ONE transaction — the actor's role is
+  revalidated inside the transaction (their membership row in
+  the request's own gym is locked `FOR UPDATE`; OWNER / ADMIN /
+  STAFF only), a per-(gym, phone) advisory lock is taken, and
+  the request flips only from PENDING (a conditional update), so
+  concurrent or repeated decisions cannot both land. Approval
+  then resolves the member exactly as linking does: a member
+  linked to a different user, multiple unlinked records, or the
+  requester already linked to a different member in the gym all
+  abort the decision as a conflict and leave the request
+  PENDING; exactly one unlinked record is **adopted** (only its
+  `userId` is set — its staff-recorded name is kept; nothing is
+  merged); otherwise a new member is created from the request's
+  name and verified phone, linked to the requester's user. If
+  the resolved member already has **any** membership, approval
+  aborts — it never stacks a second period. Otherwise the
+  initial membership is created from the staff-confirmed terms
+  (plan, fee, start date — prefilled from the request, editable
+  at decision time, validated server-side) with the expiry date
+  **derived by `calculateExpiryDate`**, exactly as in staff
+  member creation. The request row records `decidedByUserId`,
+  `decidedAt`, and (on approval) `resultingMemberId`, and the
+  decision audit (`MEMBER_JOIN_REQUEST_APPROVED` /
+  `MEMBER_JOIN_REQUEST_REJECTED`) is written in the same
+  transaction. Rejection creates nothing. Approval creates **no
+  payment, no debt record, and no inferred historical dues**:
+  the new membership's outstanding is the usual derived figure
+  — its fee minus its confirmed payments — which at approval is
+  simply the full fee, because no payments exist yet; money
+  moves only afterwards, through the existing payment flows.
+  The same advisory lock is also taken by staff member creation
+  (`createMemberWithMembership`), whose duplicate-phone check
+  now runs inside its transaction under that lock, so approvals
+  and manual creation for the same gym + phone linearize (see
+  §9 for the convention this depends on). After approval the
+  requester gets no session from the decision itself; their next
+  sign-in links idempotently.
+- **The `resultingMember` foreign key is corrected:**
+  migration `20261017130000_restrict_join_request_result_member_fk`
+  changed the composite FK from `ON DELETE SET NULL` (which
+  would also have tried to null the required `organization_id`)
+  to `ON DELETE RESTRICT`, before any code wrote the field.
+  Deleting a member that a decided request produced now fails,
+  preserving decision provenance (verified against PostgreSQL:
+  the constraint's delete action is `RESTRICT`, and a database
+  test proves a referenced member cannot be deleted while an
+  unreferenced one can). No application flow deletes members.
+
 # 5. Data
 
-Nine migrations, all applied cleanly to real PostgreSQL 16 in CI and
-in local verification:
+Twelve migrations. The first ten shipped in `a046fcb`, whose CI
+run completed SUCCESS (run `38603651141`); the workflow's
+db-tests job applies migrations with `prisma migrate deploy` to
+a disposable PostgreSQL 16 before running the database suites.
+All twelve are verified locally by direct `prisma migrate
+deploy` against PostgreSQL 16 (exit 0):
 
 `20260928204500_add_application_user`,
 `20260928213000_add_organizations_and_memberships`,
@@ -160,44 +334,73 @@ in local verification:
 `20261009010000_add_member_otp_challenges`,
 `20261009110000_add_member_sessions_and_phone_identity`,
 `20261010103000_add_attendance_sessions`,
-`20261011120000_add_payment_claims`.
+`20261011120000_add_payment_claims`,
+`20261014120000_add_payment_idempotency_key` (nullable
+`payments.idempotency_key` plus its unique index; keyless payments
+never collide),
+`20261017120000_add_member_join_requests` (the `member_join_requests`
+table with composite tenant keys and the partial unique index that
+caps one PENDING request per gym + phone; §4.9),
+`20261017130000_restrict_join_request_result_member_fk` (the
+`resultingMember` composite foreign key's delete action changed
+from SET NULL to RESTRICT; no data changes; §4.9).
 
 # 6. Testing and CI (verified evidence)
 
-CI (`.github/workflows/ci.yml`) has three jobs; run `38447698232` on
-`57796bd1` completed **SUCCESS**:
+CI (`.github/workflows/ci.yml`) has three jobs; run `38603651141` on
+`a046fcb` completed **SUCCESS**:
 
-- **build** (2m35s): install, Prisma generate + validate, lint,
+- **build**: install, Prisma generate + validate, lint,
   typecheck, Vitest, Playwright browser smoke tests, production
   build, docs consistency check.
-- **db-tests** (1m29s): migrations applied to a disposable
+- **db-tests**: migrations applied to a disposable
   PostgreSQL 16, then the real-database suites via
   `scripts/run-db-tests.mjs`, which fails closed on any skip or
   failure.
-- **e2e-auth** (2m14s): authenticated OWNER smoke test through the
+- **e2e-auth**: authenticated OWNER smoke test through the
   real Clerk sign-in path against a disposable database.
 
-Verified counts at this baseline: Vitest **552 passed / 40 skipped**
-(the 40 are exactly the database-gated tests, which run in the
-db-tests job); `test:db` **57/57 passed, 0 skipped** on real
-PostgreSQL 16; Playwright default suite **22 tests in 9 files**
-(plus the separate e2e-auth smoke suite). History note: commit
+CI-verified counts at `a046fcb`: Vitest **616 passed / 56 skipped**;
+`test:db` **87/87 passed, 0 skipped**; Playwright default suite
+**22 tests in 9 files** (plus the separate e2e-auth smoke suite).
+
+Locally verified counts at the current baseline `1cc6b88`
+(2026-10-17/18, Node **20.20.2** — the CI Node major — with the
+full battery run on the committed tree): Vitest **711 passed /
+93 skipped** (the skips are the database-gated suites, which run
+under `test:db`, plus a small number of pre-existing conditional
+skips); `test:db` **128/128 passed, 0 skipped** on real
+PostgreSQL 16 (including the join-request submission, decision,
+and concurrency suites alongside pool-configuration and
+payment-idempotency); lint, typecheck, and production build all
+exit 0. These are **local results only** — CI has not run on the
+three local commits. The Playwright suites were not re-run
+locally; their last execution is the CI run above. History note: commit
 `885569f` is a temporary CI diagnostic from the Playwright
 troubleshooting period; it is superseded and inert — no revert is
 required.
 
 # 7. Deployment state
 
-**Nothing is deployed anywhere.** The repository is
-host-compatible (Procfile with release-phase
+**Nothing is deployed anywhere, and nothing has been provisioned.**
+The three newest feature commits (`5f5aedf` join requests,
+`e8122b1` join-intent OTP, `1cc6b88` join-request decisions)
+exist on local `main` only and have not been pushed; GitHub
+`main` is at `a046fcb`.
+The repository is host-compatible (Procfile with release-phase
 `prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
 production dependencies — commit `1803c9b8`) but no host, database,
-domain, or environment has been provisioned. Hosting assessments
-exist (Render recommended for production; Heroku student credit
-assessed as zero-cost staging with material backup limits), but
-**ADR 004 is still Proposed** — no hosting decision has been taken,
-and no environment should hold real pilot data until backup and
-restore requirements are satisfied.
+domain, or environment exists. **ADR 004 is still Proposed** — no
+hosting decision has been taken. A Stage 0 staging review
+recommends Render (Singapore; managed PostgreSQL with point-in-time
+recovery) at an estimated $13/month; Heroku was assessed as
+zero-cost staging via the student credit with material backup
+limits (~24-hour recovery point, no PITR at the entry tier);
+Railway is also under consideration and its plan-gating for PITR
+is not yet verified. A production-readiness audit was completed on
+2026-10-15 against `a046fcb`; its open items are reflected in §8.
+No environment should hold real pilot data until backup and
+restore requirements are satisfied and a restore has been tested.
 
 # 8. Known launch blockers and outstanding work
 
@@ -205,33 +408,55 @@ Supported by current repository evidence unless marked otherwise:
 
 1. **Hosting decision and provisioning** — ADR 004 unresolved; no
    production Clerk instance, domain, or environment variables exist
-   outside CI.
+   outside CI. Stage 0 (staging, synthetic data only) is the agreed
+   first step once a provider is chosen.
 2. **2Factor live verification** — account, API key (via secure
    configuration only), DLT registration, and one live OTP
    round-trip are all outstanding; until then member sign-in is
    unverified end to end.
 3. **Backups and restore** — no backup schedule, restore drill, or
-   off-platform copy exists for any future production database.
-4. **Monitoring / error tracking** — ADR 007 still Proposed (Sentry
-   the leading candidate); the codebase contains no error-tracking
-   integration at all.
+   off-platform copy exists for any future production database;
+   recovery testing is an ADR 004 requirement before real data.
+4. **Monitoring / alerting** — H3 structured logs are emitted to
+   the platform log drain, but there is no log shipping, alerting,
+   uptime monitoring, or error tracking; ADR 007 still Proposed
+   (Sentry the leading candidate) and `SENTRY_DSN` in `.env.example`
+   is read by no code.
 5. **Membership renewal — Not started.** No renewal flow exists;
    payments explicitly do not renew. A pilot gym's first plan expiry
    has no product path yet.
-6. **PWA basics — Not started.** No `public/` directory, manifest,
-   or icons exist.
-7. **Gym switcher — Not started.** Staff and claims surfaces resolve
-   the actor's primary (earliest) gym only; members can belong to
-   multiple gyms but post-login gym selection is limited.
-8. **Identity merge — Not started.** A person who is both staff and
-   member temporarily has two user records by design (ADR 021).
-9. **Owner dashboard** — the organization home is a link hub; no
-   at-a-glance dues/expiry/attendance summary exists.
-10. **SaaS billing/trial — Not started.** No subscription or trial
+6. **Payment correction / reversal — Not started.** Confirmed
+   payments are append-only with no in-app reversal or adjustment
+   record; a staff mis-entry could currently only be corrected
+   outside the application, bypassing the audit trail.
+7. **Remaining hardening (audit items M1–M3) — Not started.**
+   Three list reads are unbounded (claim queues, per-membership
+   payment history, today's attendance); request-scoped scope
+   resolution is not memoized; there is no rate limiting outside
+   the OTP path. Failure logging does not yet cover the member
+   create/update, attendance, settings, or onboarding actions.
+8. **Migration upgrade-path test — Not started.** CI applies
+   migrations only to an empty database; migrating a database
+   populated at the previous release's schema is untested.
+9. **Readiness probe — Not started.** `/api/health` is a liveness
+   check only and does not test database reachability.
+10. **PWA basics — Not started.** No `public/` directory, manifest,
+    or icons exist.
+11. **Gym switcher — Not started.** Staff and claims surfaces resolve
+    the actor's primary (earliest) gym only; members can belong to
+    multiple gyms but post-login gym selection is limited.
+12. **Identity merge — Not started.** A person who is both staff and
+    member temporarily has two user records by design (ADR 021).
+13. **Owner dashboard** — the organization home is a link hub; no
+    at-a-glance dues/expiry/attendance summary exists.
+14. **SaaS billing/trial — Not started.** No subscription or trial
     mechanics for gyms.
-11. **Documentation debt** — ADR 023 (staff management) and ADR 024
+15. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.
+16. **Local commits not yet verified in CI.** The three newest
+    feature commits (join requests, join-intent OTP, join-request
+    decisions) are local-only; CI has not run on them (§6).
 
 # 9. Known limitations (accepted, recorded)
 
@@ -245,16 +470,37 @@ Supported by current repository evidence unless marked otherwise:
 - The member detail page reflects claim decisions on next load
   rather than via targeted cache revalidation (a deliberate
   consequence of the trusted-revalidation rule in §4.7).
+- An idempotency token does not survive a hard page reload: a fresh
+  form mount mints a fresh token, so a lost response followed by a
+  reload and resubmission can still create a second payment. This
+  is a deliberate boundary (a persisted token could be replayed
+  against an unrelated payment); the duplicate is visible in the
+  member's payment history, and the H2 check-first message covers
+  the same-mount ambiguous case.
+- Member-creation duplicate protection depends on a locking
+  convention: the duplicate-phone check is serialized by the
+  `member-decision:<gym>:<phone>` advisory lock, which every
+  member-creating path must take (today both do — join-request
+  approval and staff member creation). A future member-creating
+  path that skipped the lock would reopen the concurrent-
+  duplicate race the in-transaction check now prevents.
+- A VERIFIED OTP challenge carries no record of the intent it was
+  issued under (§4.9); the consuming endpoints' own revalidation
+  is the control, and challenge purpose-binding is deliberately
+  not implemented.
 - CI runs on Node 20; GitHub has announced runner changes for
   Node 20 actions (informational annotation on current runs, no
   failures).
 
 # 10. Next steps (each requires its own approval)
 
-1. Decide hosting (resolve ADR 004) and provision a staging
-   environment without real member data.
+1. Decide hosting (resolve ADR 004) and provision a Stage 0 staging
+   environment with synthetic data only; complete a timed restore
+   drill before any real data is considered.
 2. Provision the production Clerk instance and the 2Factor account;
    perform one live OTP round-trip.
-3. Implement membership renewal.
-4. Write ADR 023 and ADR 024; refresh this document after the
-   deployment decision.
+3. Push the three local feature commits (`5f5aedf`, `e8122b1`,
+   `1cc6b88`) so CI verifies them on GitHub `main`.
+4. Implement membership renewal, then payment reversal records.
+5. Write ADR 023 and ADR 024; refresh this document after the
+   deployment decision lands.

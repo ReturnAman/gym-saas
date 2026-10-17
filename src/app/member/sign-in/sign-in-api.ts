@@ -2,6 +2,7 @@
 
 import {
   SignInApiError,
+  type JoinSubmitResult,
   type SignInApi,
 } from "@/lib/member-sign-in-flow";
 
@@ -15,6 +16,11 @@ import {
  *   every failure is the same generic 400 (503 on provider outage).
  * - POST /api/member-auth/link → 200 { linked: true } + session
  *   cookie; every failure is the same generic 400.
+ * - POST /api/member-auth/join-request → 201 { requested: true };
+ *   200 already pending; 409 ALREADY_REGISTERED; 400 VALIDATION_ERROR
+ *   with per-field messages; every other failure the generic 400.
+ *   The distinguishable outcomes are returned as a JoinSubmitResult;
+ *   the generic failures throw like the other calls.
  *
  * A non-OK response becomes a SignInApiError carrying the HTTP status
  * (and the body's error code when parseable); a rejected fetch becomes
@@ -49,7 +55,10 @@ async function postJson(
 
 export const memberSignInApi: SignInApi = {
   async requestOtp(input) {
-    const json = await postJson("/api/member-auth/otp/request", input);
+    const json = await postJson("/api/member-auth/otp/request", {
+      organizationId: input.organizationId,
+      phoneNumber: input.phoneNumber,
+    });
     const challengeId = (json as { challengeId?: unknown } | null)
       ?.challengeId;
     if (typeof challengeId !== "string" || challengeId === "") {
@@ -66,5 +75,41 @@ export const memberSignInApi: SignInApi = {
 
   async link(input) {
     await postJson("/api/member-auth/link", input);
+  },
+
+  async submitJoinRequest(input): Promise<JoinSubmitResult> {
+    let response: Response;
+    try {
+      response = await fetch("/api/member-auth/join-request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+    } catch {
+      throw new SignInApiError(null, null);
+    }
+    const json: unknown = await response.json().catch(() => null);
+    if (response.status === 201) {
+      return { outcome: "created" };
+    }
+    if (response.status === 200) {
+      return { outcome: "already_pending" };
+    }
+    const error = (
+      json as {
+        error?: {
+          code?: unknown;
+          fields?: Partial<Record<string, string>>;
+        };
+      } | null
+    )?.error;
+    const code = typeof error?.code === "string" ? error.code : null;
+    if (response.status === 409 && code === "ALREADY_REGISTERED") {
+      return { outcome: "already_registered" };
+    }
+    if (response.status === 400 && code === "VALIDATION_ERROR") {
+      return { outcome: "validation_error", fields: error?.fields ?? {} };
+    }
+    throw new SignInApiError(response.status, code);
   },
 };

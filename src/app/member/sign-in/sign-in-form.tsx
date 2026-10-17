@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
+import { MEMBERSHIP_PLANS, PLAN_LABELS } from "@/lib/members";
 import {
   MemberSignInFlow,
   type SignInState,
@@ -60,6 +61,12 @@ export function SignInForm({ gymId }: { gymId: string }) {
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
 
+  // Join-request details (join intent only).
+  const [joinName, setJoinName] = useState("");
+  const [joinPlan, setJoinPlan] = useState("");
+  const [joinFee, setJoinFee] = useState("");
+  const [joinStartDate, setJoinStartDate] = useState("");
+
   // Tick once a second on the OTP step so the resend countdown and the
   // button's enabled state stay current.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -84,7 +91,129 @@ export function SignInForm({ gymId }: { gymId: string }) {
     return <p>Signing you in…</p>;
   }
   if (state.step === "done") {
+    if (state.joinOutcome) {
+      // A join submission reached its outcome: there is no session
+      // and nothing to redirect to — the message is the end state.
+      return (
+        <div>
+          {state.info && <p>{state.info}</p>}
+          {state.joinOutcome === "created" && (
+            <p>
+              The gym will review your request and confirm your
+              membership details with you.
+            </p>
+          )}
+          {state.joinOutcome === "already_registered" && (
+            <p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOtp("");
+                  flow.reset(gymId);
+                }}
+              >
+                Back to sign in
+              </button>
+            </p>
+          )}
+        </div>
+      );
+    }
     return <p>Redirecting…</p>;
+  }
+
+  if (state.step === "join-details") {
+    const fieldErrors = state.joinFieldErrors;
+    return (
+      <div>
+        <p>
+          Your number is verified. Tell the gym who you are and the
+          membership you would like — the gym confirms the final plan,
+          fee, and dates before your membership becomes active.
+        </p>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void flow.submitJoinDetails({
+              name: joinName,
+              requestedPlan: joinPlan,
+              proposedFee: joinFee,
+              proposedStartDate: joinStartDate,
+            });
+          }}
+        >
+          <div>
+            <label htmlFor="joinName">Your name</label>
+            <input
+              id="joinName"
+              name="name"
+              type="text"
+              autoComplete="name"
+              value={joinName}
+              onChange={(event) => setJoinName(event.target.value)}
+            />
+            {fieldErrors.name && <p role="alert">{fieldErrors.name}</p>}
+          </div>
+          <div>
+            <label htmlFor="joinPlan">Plan</label>
+            <select
+              id="joinPlan"
+              name="requestedPlan"
+              value={joinPlan}
+              onChange={(event) => setJoinPlan(event.target.value)}
+            >
+              <option value="">Choose a plan</option>
+              {MEMBERSHIP_PLANS.map((plan) => (
+                <option key={plan} value={plan}>
+                  {PLAN_LABELS[plan]}
+                </option>
+              ))}
+            </select>
+            {fieldErrors.plan && <p role="alert">{fieldErrors.plan}</p>}
+          </div>
+          <div>
+            <label htmlFor="joinFee">Proposed fee (₹)</label>
+            <input
+              id="joinFee"
+              name="proposedFee"
+              type="text"
+              inputMode="decimal"
+              value={joinFee}
+              onChange={(event) => setJoinFee(event.target.value)}
+            />
+            {fieldErrors.fee && <p role="alert">{fieldErrors.fee}</p>}
+          </div>
+          <div>
+            <label htmlFor="joinStartDate">Proposed start date</label>
+            <input
+              id="joinStartDate"
+              name="proposedStartDate"
+              type="date"
+              value={joinStartDate}
+              onChange={(event) => setJoinStartDate(event.target.value)}
+            />
+            {fieldErrors.startDate && (
+              <p role="alert">{fieldErrors.startDate}</p>
+            )}
+          </div>
+          {state.error && <p role="alert">{state.error}</p>}
+          <button type="submit" disabled={state.busy}>
+            {state.busy ? "Please wait…" : "Send request"}
+          </button>
+        </form>
+        <p>
+          <button
+            type="button"
+            onClick={() => {
+              setOtp("");
+              flow.backToPhone();
+            }}
+          >
+            Wrong number? Go back
+          </button>
+        </p>
+      </div>
+    );
   }
 
   if (state.step === "otp") {
@@ -171,12 +300,31 @@ export function SignInForm({ gymId }: { gymId: string }) {
             onChange={(event) => setPhone(event.target.value)}
           />
         </div>
-        <p>Enter the phone number registered with this gym.</p>
+        <p>
+          {state.intent === "join"
+            ? "Enter your mobile number. We'll send a code to verify it, then you can send your join request to this gym."
+            : "Enter the phone number registered with this gym."}
+        </p>
         {state.error && <p role="alert">{state.error}</p>}
         <button type="submit" disabled={state.busy}>
           {state.busy ? "Please wait…" : "Continue"}
         </button>
       </form>
+      {state.intent === "join" ? (
+        <p>
+          Already a member of this gym?{" "}
+          <button type="button" onClick={() => flow.chooseSignIn()}>
+            Sign in instead
+          </button>
+        </p>
+      ) : (
+        <p>
+          New to this gym?{" "}
+          <button type="button" onClick={() => flow.chooseJoin()}>
+            Request to join
+          </button>
+        </p>
+      )}
       <p>If your phone number has changed, please see the front desk.</p>
     </>
   );

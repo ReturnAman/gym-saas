@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   CONNECTION_ERROR_COPY,
+  JOIN_ALREADY_PENDING_COPY,
+  JOIN_ALREADY_REGISTERED_COPY,
+  JOIN_CREATED_COPY,
+  JOIN_FAILURE_COPY,
   MemberSignInFlow,
   OTP_FAILURE_COPY,
   OTP_REQUEST_INFO_COPY,
@@ -9,6 +13,7 @@ import {
   PHONE_ERROR_COPY,
   SMS_UNAVAILABLE_COPY,
   SignInApiError,
+  type JoinSubmitResult,
   type SignInApi,
 } from "../member-sign-in-flow";
 
@@ -16,20 +21,35 @@ const GYM_A = "11111111-1111-4111-8111-111111111111";
 const GYM_B = "22222222-2222-4222-8222-222222222222";
 const PHONE = "9876543210";
 
-type RequestInput = { organizationId: string; phoneNumber: string };
+type RequestInput = {
+  organizationId: string;
+  phoneNumber: string;
+};
 type VerifyInput = { organizationId: string; challengeId: string; otp: string };
 type LinkInput = { organizationId: string; challengeId: string };
+type JoinInput = {
+  organizationId: string;
+  challengeId: string;
+  name: string;
+  requestedPlan: string;
+  proposedFee: string;
+  proposedStartDate: string;
+};
 
 /** Call-counting fake API with programmable per-call behavior. */
 class FakeSignInApi implements SignInApi {
   requestCalls: RequestInput[] = [];
   verifyCalls: VerifyInput[] = [];
   linkCalls: LinkInput[] = [];
+  joinCalls: JoinInput[] = [];
 
   requestHandler: (input: RequestInput) => Promise<{ challengeId: string }> =
     async () => ({ challengeId: `challenge-${this.requestCalls.length}` });
   verifyHandler: (input: VerifyInput) => Promise<void> = async () => {};
   linkHandler: (input: LinkInput) => Promise<void> = async () => {};
+  joinHandler: (input: JoinInput) => Promise<JoinSubmitResult> = async () => ({
+    outcome: "created",
+  });
 
   async requestOtp(input: RequestInput) {
     this.requestCalls.push(input);
@@ -42,6 +62,10 @@ class FakeSignInApi implements SignInApi {
   async link(input: LinkInput) {
     this.linkCalls.push(input);
     return this.linkHandler(input);
+  }
+  async submitJoinRequest(input: JoinInput) {
+    this.joinCalls.push(input);
+    return this.joinHandler(input);
   }
 }
 
@@ -322,6 +346,133 @@ describe("MemberSignInFlow — OTP step and linking", () => {
   });
 });
 
+describe("MemberSignInFlow — join intent", () => {
+  const DETAILS = {
+    name: "New Person",
+    requestedPlan: "MONTHLY",
+    proposedFee: "1500",
+    proposedStartDate: "2026-11-01",
+  };
+
+  /** Drive a join-intent flow to the join-details step. */
+  async function toJoinDetailsStep(flow: MemberSignInFlow) {
+    flow.chooseJoin();
+    await flow.submitPhone(PHONE);
+    await flow.submitOtp("123456");
+    expect(flow.getState().step).toBe("join-details");
+  }
+
+  it("toggles intent on the phone step only", async () => {
+    const { flow } = makeFlow();
+    expect(flow.getState().intent).toBe("sign-in");
+    flow.chooseJoin();
+    expect(flow.getState().intent).toBe("join");
+    flow.chooseSignIn();
+    expect(flow.getState().intent).toBe("sign-in");
+
+    flow.chooseJoin();
+    await flow.submitPhone(PHONE);
+    // Off the phone step the toggle no longer applies.
+    flow.chooseSignIn();
+    expect(flow.getState().intent).toBe("join");
+  });
+
+  it("verifies through the same OTP journey, then shows details — never links, never probes", async () => {
+    const { api, flow, probes } = makeFlow();
+    await toJoinDetailsStep(flow);
+    expect(api.verifyCalls).toEqual([
+      { organizationId: GYM_A, challengeId: "challenge-1", otp: "123456" },
+    ]);
+    expect(api.linkCalls).toHaveLength(0);
+    expect(probes).toHaveLength(0);
+    expect(flow.getState().joinOutcome).toBeNull();
+  });
+
+  it("submits the details against the verified challenge and ends on the created message", async () => {
+    const { api, flow, probes } = makeFlow();
+    await toJoinDetailsStep(flow);
+    await flow.submitJoinDetails(DETAILS);
+    expect(api.joinCalls).toEqual([
+      { organizationId: GYM_A, challengeId: "challenge-1", ...DETAILS },
+    ]);
+    const state = flow.getState();
+    expect(state.step).toBe("done");
+    expect(state.joinOutcome).toBe("created");
+    expect(state.info).toBe(JOIN_CREATED_COPY);
+    expect(state.busy).toBe(false);
+    expect(probes).toHaveLength(0);
+  });
+
+  it("maps already_pending and already_registered to their messages", async () => {
+    const { api, flow } = makeFlow();
+    await toJoinDetailsStep(flow);
+    api.joinHandler = async () => ({ outcome: "already_pending" });
+    await flow.submitJoinDetails(DETAILS);
+    expect(flow.getState().step).toBe("done");
+    expect(flow.getState().joinOutcome).toBe("already_pending");
+    expect(flow.getState().info).toBe(JOIN_ALREADY_PENDING_COPY);
+
+    const second = makeFlow();
+    await toJoinDetailsStep(second.flow);
+    second.api.joinHandler = async () => ({ outcome: "already_registered" });
+    await second.flow.submitJoinDetails(DETAILS);
+    expect(second.flow.getState().step).toBe("done");
+    expect(second.flow.getState().joinOutcome).toBe("already_registered");
+    expect(second.flow.getState().info).toBe(JOIN_ALREADY_REGISTERED_COPY);
+  });
+
+  it("keeps field errors on the details step and the challenge alive for a corrected resubmission", async () => {
+    const { api, flow } = makeFlow();
+    await toJoinDetailsStep(flow);
+    api.joinHandler = async () => ({
+      outcome: "validation_error",
+      fields: { fee: "Fee must be a valid amount." },
+    });
+    await flow.submitJoinDetails(DETAILS);
+    expect(flow.getState().step).toBe("join-details");
+    expect(flow.getState().joinFieldErrors).toEqual({
+      fee: "Fee must be a valid amount.",
+    });
+    expect(flow.getState().busy).toBe(false);
+
+    api.joinHandler = async () => ({ outcome: "created" });
+    await flow.submitJoinDetails({ ...DETAILS, proposedFee: "1500.50" });
+    expect(api.joinCalls).toHaveLength(2);
+    expect(api.joinCalls[1]?.challengeId).toBe("challenge-1");
+    expect(flow.getState().joinOutcome).toBe("created");
+  });
+
+  it("returns to the OTP step on a generic submission failure", async () => {
+    const { api, flow } = makeFlow();
+    await toJoinDetailsStep(flow);
+    api.joinHandler = async () => {
+      throw new SignInApiError(400, "JOIN_REQUEST_FAILED");
+    };
+    await flow.submitJoinDetails(DETAILS);
+    expect(flow.getState().step).toBe("otp");
+    expect(flow.getState().error).toBe(JOIN_FAILURE_COPY);
+    expect(flow.getState().busy).toBe(false);
+  });
+
+  it("stays on the details step with the connection copy on a transport failure", async () => {
+    const { api, flow } = makeFlow();
+    await toJoinDetailsStep(flow);
+    api.joinHandler = async () => {
+      throw new SignInApiError(null, null);
+    };
+    await flow.submitJoinDetails(DETAILS);
+    expect(flow.getState().step).toBe("join-details");
+    expect(flow.getState().error).toBe(CONNECTION_ERROR_COPY);
+  });
+
+  it("ignores detail submissions off the details step", async () => {
+    const { api, flow } = makeFlow();
+    await flow.submitJoinDetails(DETAILS);
+    expect(api.joinCalls).toHaveLength(0);
+    expect(flow.getState().step).toBe("phone");
+  });
+});
+
 describe("MemberSignInFlow — resend and cooldown", () => {
   it("is a no-op before the cooldown elapses", async () => {
     const { api, flow, advance } = makeFlow();
@@ -441,6 +592,9 @@ describe("MemberSignInFlow — back and reset", () => {
       info: null,
       busy: false,
       resendAvailableAt: null,
+      intent: "sign-in",
+      joinOutcome: null,
+      joinFieldErrors: {},
     });
     expect(flow.canResend()).toBe(false);
 

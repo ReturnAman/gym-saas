@@ -5,6 +5,11 @@ import { randomUUID } from "node:crypto";
 import { validatePhoneNumber } from "../members";
 import { db } from "./db";
 import {
+  submitJoinRequest,
+  type SubmitJoinRequestInput,
+  type SubmitJoinRequestResult,
+} from "./member-join-requests";
+import {
   linkVerifiedChallenge,
   type MemberLinkResult,
 } from "./member-linking";
@@ -109,4 +114,19 @@ export async function linkMember(input: {
   challengeId: string;
 }): Promise<MemberLinkResult> {
   return linkVerifiedChallenge(input);
+}
+
+/**
+ * Consume a VERIFIED challenge to submit a join request for the gym
+ * (onboarding Slice 1). Delegates to the join-request service: the
+ * request is created (with its audit event) in the same transaction
+ * that claims the challenge, and nothing else — no Member, no
+ * Membership, no session — is created. Non-creating outcomes
+ * (already pending / already registered) leave the challenge
+ * unconsumed.
+ */
+export async function submitMemberJoinRequest(
+  input: SubmitJoinRequestInput,
+): Promise<SubmitJoinRequestResult> {
+  return submitJoinRequest(input);
 }

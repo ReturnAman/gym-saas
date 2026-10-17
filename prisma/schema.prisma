@@ -115,6 +115,10 @@ model User {
   // Gym-scoped member sessions (phone-OTP path only; never Clerk).
   memberSessions MemberSession[]
 
+  // Join requests this user submitted (phone-OTP member path; the
+  // phone-shell user created by OTP linking/join submission).
+  memberJoinRequests MemberJoinRequest[] @relation("JoinRequestSubmitter")
+
   @@map("users")
 }
 
@@ -153,6 +157,7 @@ model Organization {
   auditLogs         AuditLog[]
   memberOtpChallenges MemberOtpChallenge[]
   memberSessions    MemberSession[]
+  memberJoinRequests MemberJoinRequest[]
 
   @@map("organizations")
 }
@@ -214,6 +219,9 @@ model Member {
   payments     Payment[]
   paymentClaims PaymentClaim[]
   attendanceSessions AttendanceSession[]
+  // The member record a join request produced, when staff approval (a
+  // later slice) creates one from the request.
+  joinRequests MemberJoinRequest[] @relation("JoinRequestResult")
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -574,4 +582,69 @@ model MemberSession {
   @@index([userId])
   @@index([organizationId])
   @@map("member_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Member join requests (onboarding Slice 1: submission + read-only queue).
+// ---------------------------------------------------------------------------
+// A MemberJoinRequest is a prospective member asking to join one gym:
+// after proving control of a phone number via the existing OTP flow, the
+// person submits their name and PROPOSED plan, fee, and start date.
+// Nothing about a request is confirmed: it creates no Member, no
+// Membership, no payment, and no session, and staff approval/rejection
+// is a later slice — the APPROVED/REJECTED statuses and the decided*
+// fields exist now so that slice needs no schema change.
+//
+// The request's identity anchor is the verified phone snapshot copied
+// from the consumed OTP challenge (never client input), and the
+// submitter is the phone-backed User the OTP path resolves by that
+// phone (the same identity linking would use; creating it grants
+// nothing — no Clerk identity, no role, no organization membership).
+//
+// Tenant integrity mirrors the other member-path tables: the request
+// belongs to exactly one organization, and the composite foreign key
+// (organization_id, resulting_member_id) → members(organization_id, id)
+// guarantees a decided request can only point at a member of its own
+// organization.
+//
+// Duplicate safety (ADR 013 — database constraints, not prechecks): a
+// partial unique index declared only in the migration (Prisma cannot
+// express it) — member_join_requests_one_pending_per_phone, WHERE
+// status = 'PENDING', over (organization_id, phone_number) — makes a
+// second PENDING request for the same phone in the same gym impossible
+// even under concurrent submissions.
+enum MemberJoinRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model MemberJoinRequest {
+  id                String                  @id @default(uuid())
+  organizationId    String                  @map("organization_id")
+  // The phone-backed User who submitted (resolved by verified phone).
+  userId            String                  @map("user_id")
+  // Snapshot of the verified phone from the consumed OTP challenge.
+  phoneNumber       String                  @map("phone_number")
+  // As submitted by the requester — self-asserted, staff confirm the
+  // member's identity when they decide the request (later slice).
+  name              String
+  requestedPlan     MembershipPlan          @map("requested_plan")
+  proposedFee       Decimal                 @map("proposed_fee") @db.Decimal(12, 2)
+  proposedStartDate DateTime                @map("proposed_start_date") @db.Date
+  status            MemberJoinRequestStatus @default(PENDING)
+  // Lifecycle fields — written only by the future approval slice.
+  decidedByUserId   String?                 @map("decided_by_user_id")
+  decidedAt         DateTime?               @map("decided_at") @db.Timestamptz(6)
+  resultingMemberId String?                 @map("resulting_member_id")
+  createdAt         DateTime                @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime                @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user            User         @relation("JoinRequestSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  resultingMember Member?      @relation("JoinRequestResult", fields: [organizationId, resultingMemberId], references: [organizationId, id], onDelete: SetNull)
+
+  @@unique([organizationId, id])
+  @@index([organizationId, status, createdAt])
+  @@map("member_join_requests")
 }

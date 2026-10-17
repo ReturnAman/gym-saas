@@ -26,6 +26,9 @@ export default async function OrganizationPage() {
         <Link href="/app/org/payment-claims">Payment claims</Link>
       </p>
       <p>
+        <Link href="/app/org/join-requests">Pending members</Link>
+      </p>
+      <p>
         <Link href="/app/org/staff">Staff</Link>
       </p>
       <p>

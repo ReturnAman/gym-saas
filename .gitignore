@@ -49,3 +49,9 @@ tests/e2e-auth/.auth/
 # Misc
 *.tmp
 *.swp
+
+# Load-test actor tokens (synthetic local accounts only — never commit)
+scripts/load/actors.local.json
+
+# Load-test run outputs (snapshots, k6 exports — local only)
+scripts/load/results/

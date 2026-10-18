@@ -1,15 +1,18 @@
 # 20 — CURRENT STATE
 
 **Project:** gym-saas
-**Version:** 0.7 (draft — pending owner approval)
+**Version:** 0.8 (draft — pending owner approval)
 **Status:** Core feature set implemented and merged to GitHub `main`; not deployed and not ready for public launch.
 **Last Updated:** 2026-10-18
-**Baseline:** GitHub `main` @ `8a9af93e0700bba4b17e7ff2110eb3d758148049`
-**Latest CI:** run `39064420227` on `8a9af93` — SUCCESS (build, db-tests, e2e-auth)
+**Baseline:** GitHub `main` @ `49e4959091200141a0015717d813d6ead16974dd`
+**Latest CI:** run `39115484351` on `49e4959` — SUCCESS (build, db-tests, db-upgrade, e2e-auth)
 
-> This revision follows the push of the join-request stack
-> (`5f5aedf`, `e8122b1`, `1cc6b88`, `8a9af93`) to GitHub `main`
-> and its first green CI run.
+> This revision records the migration upgrade-path test
+> (Phase B, commit `49e4959`): CI now also upgrades a seeded
+> database from the pinned previous release (10 migrations) to
+> HEAD (12 migrations), closing the gap §8 recorded from the
+> 2026-10-14 audit. Backups, restore testing, and deployment
+> are unchanged — Phase B verifies migration upgrades only.
 > Status words used below:
 > **Completed** = implemented, tested, and merged to `main`;
 > **Unverified** = code exists but the external integration has never
@@ -318,10 +321,13 @@ that gym before any member record exists:
 
 # 5. Data
 
-Twelve migrations, all covered by CI: run `39064420227` on
-`8a9af93` completed SUCCESS, and the workflow's db-tests and
+Twelve migrations, all covered by CI: run `39115484351` on
+`49e4959` completed SUCCESS, and the workflow's db-tests and
 e2e-auth jobs each apply migrations with `prisma migrate
-deploy` to a disposable PostgreSQL 16. All twelve are also
+deploy` to a disposable PostgreSQL 16. The workflow's
+db-upgrade job additionally upgrades a database seeded at the
+pinned `a046fcb` schema (10 migrations) to HEAD and asserts
+the seeded rows survive (§6). All twelve are also
 verified locally by direct `prisma migrate deploy` against
 PostgreSQL 16 (exit 0):
 
@@ -346,8 +352,8 @@ from SET NULL to RESTRICT; no data changes; §4.9).
 
 # 6. Testing and CI (verified evidence)
 
-CI (`.github/workflows/ci.yml`) has three jobs; run `39064420227` on
-`8a9af93` completed **SUCCESS**:
+CI (`.github/workflows/ci.yml`) has four jobs; run `39115484351` on
+`49e4959` completed **SUCCESS**:
 
 - **build**: install, Prisma generate + validate, lint,
   typecheck, Vitest, Playwright browser smoke tests, production
@@ -356,10 +362,21 @@ CI (`.github/workflows/ci.yml`) has three jobs; run `39064420227` on
   PostgreSQL 16, then the real-database suites via
   `scripts/run-db-tests.mjs`, which fails closed on any skip or
   failure.
+- **db-upgrade**: the pinned previous release (`a046fcb`,
+  10 migrations) is applied to a disposable PostgreSQL 16, a
+  small synthetic fixture is seeded, and the same database is
+  upgraded to HEAD's migrations via
+  `scripts/run-upgrade-test.mjs`; seeded-row survival, the
+  resulting-member FK's RESTRICT action, and `test:db` against
+  the upgraded database are all asserted. The runner refuses
+  any non-disposable target before contacting a database
+  (anchored `gymsaas_upgrade` naming, loopback hosts only, no
+  target-overriding query parameters, and an explicit
+  confirmation marker). Informational — not a required check.
 - **e2e-auth**: authenticated OWNER smoke test through the
   real Clerk sign-in path against a disposable database.
 
-Verified counts at the current baseline `8a9af93`: Vitest
+Verified counts at the current baseline `49e4959`: Vitest
 **711 passed / 93 skipped** (the skips are the database-gated
 suites, which run under `test:db`, plus a small number of
 pre-existing conditional skips); `test:db` **128/128 passed,
@@ -369,7 +386,7 @@ pool-configuration and payment-idempotency); Playwright default
 suite **22 tests passed** in the build job (plus the separate
 e2e-auth smoke suite, also green). The same battery was run
 locally before the push (Node **20.20.2**, the CI Node major)
-with identical results, and CI run `39064420227` confirms them
+with identical results, and CI run `39115484351` confirms them
 on GitHub. History note: commit
 `885569f` is a temporary CI diagnostic from the Playwright
 troubleshooting period; it is superseded and inert — no revert is
@@ -378,8 +395,8 @@ required.
 # 7. Deployment state
 
 **Nothing is deployed anywhere, and nothing has been provisioned.**
-GitHub `main` is at `8a9af93`; the full feature set described
-in §4 is merged there and CI-green (run `39064420227`).
+GitHub `main` is at `49e4959`; the full feature set described
+in §4 is merged there and CI-green (run `39115484351`).
 The repository is host-compatible (Procfile with release-phase
 `prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
 production dependencies — commit `1803c9b8`) but no host, database,
@@ -428,23 +445,20 @@ Supported by current repository evidence unless marked otherwise:
    resolution is not memoized; there is no rate limiting outside
    the OTP path. Failure logging does not yet cover the member
    create/update, attendance, settings, or onboarding actions.
-8. **Migration upgrade-path test — Not started.** CI applies
-   migrations only to an empty database; migrating a database
-   populated at the previous release's schema is untested.
-9. **Readiness probe — Not started.** `/api/health` is a liveness
+8. **Readiness probe — Not started.** `/api/health` is a liveness
    check only and does not test database reachability.
-10. **PWA basics — Not started.** No `public/` directory, manifest,
+9. **PWA basics — Not started.** No `public/` directory, manifest,
     or icons exist.
-11. **Gym switcher — Not started.** Staff and claims surfaces resolve
+10. **Gym switcher — Not started.** Staff and claims surfaces resolve
     the actor's primary (earliest) gym only; members can belong to
     multiple gyms but post-login gym selection is limited.
-12. **Identity merge — Not started.** A person who is both staff and
+11. **Identity merge — Not started.** A person who is both staff and
     member temporarily has two user records by design (ADR 021).
-13. **Owner dashboard** — the organization home is a link hub; no
+12. **Owner dashboard** — the organization home is a link hub; no
     at-a-glance dues/expiry/attendance summary exists.
-14. **SaaS billing/trial — Not started.** No subscription or trial
+13. **SaaS billing/trial — Not started.** No subscription or trial
     mechanics for gyms.
-15. **Documentation debt** — ADR 023 (staff management) and ADR 024
+14. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.
 

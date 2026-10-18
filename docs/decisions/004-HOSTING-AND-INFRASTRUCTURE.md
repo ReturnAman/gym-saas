@@ -1,702 +1,320 @@
 # ADR 004 — Hosting and Infrastructure
 
-**Project:** gym-saas  
-**Status:** Proposed  
-**Date:** YYYY-MM-DD  
+**Project:** gym-saas
+**Status:** Proposed — awaiting owner approval
+**Date:** 2026-10-18
 **Decision Type:** Infrastructure / Architecture / Cost
 
----
-
-# 1. Context
-
-gym-saas is being developed as a real SaaS product with the following goals:
-
-- Start with minimal personal infrastructure cost
-- Use available student benefits where appropriate
-- Avoid premature infrastructure complexity
-- Keep the application deployable and maintainable
-- Support a small production pilot
-- Allow infrastructure to scale as paying customers increase
-- Avoid unnecessary vendor lock-in
-- Protect production data and secrets
-
-The initial product is expected to have relatively low traffic.
-
-The architecture should therefore optimize for:
-
-> Simplicity + reliability + low initial cost
-
-rather than maximum theoretical scale.
+> This revision (2026-10-18) completes the provider evaluation the
+> original ADR 004 required before final selection (its §37:
+> pricing and capabilities verified from official provider
+> documentation). Its binding requirements are carried into §2;
+> citations of the form "original §N" refer to that original text.
+> All prices and capabilities below were verified from official
+> vendor documentation on 2026-10-18 (first verified 2026-10-14/15;
+> changes since then are called out in §10). Status remains
+> Proposed: no provider is selected until the owner approves §9.
 
 ---
 
-# 2. Infrastructure Requirements
-
-The initial production system requires:
-
-- Web application hosting
-- PostgreSQL
-- HTTPS
-- Environment/secrets management
-- Application logs
-- Error monitoring
-- Database backups
-- CI/CD
-- Domain
-- Optional background job execution
-- WhatsApp provider integration
-
-Additional infrastructure should only be introduced when a real requirement exists.
-
----
-
-# 3. Initial Architecture
-
-The preferred initial architecture is:
-
-```text
-User
-  ↓
-HTTPS
-  ↓
-Next.js Application
-  ↓
-PostgreSQL
-Supporting services:
-
-Next.js Application
- ├── Authentication Provider
- ├── WhatsApp Provider
- ├── Error Tracking
- └── Background Job Infrastructure (when required)
-
-The initial system should remain a modular application rather than a collection of independently deployed services.
-
-4. Application Hosting
-
-The application requires a platform capable of running the selected Next.js architecture.
-
-Potential hosting options include:
-
-Azure
-Vercel
-Heroku
-Other suitable managed platforms
-
-The final provider remains open.
-
-The provider should be evaluated based on:
-
-Student benefits
-Cost
-Next.js compatibility
-Deployment simplicity
-Environment variable management
-Logs
-Scaling options
-Reliability
-Deployment workflow
-Vendor lock-in
-Production suitability
-5. Student Benefits
-
-The project has access to student developer benefits.
-
-Potentially useful resources include:
-
-Azure student credit
-Heroku credit
-GitHub Pro
-GitHub Actions
-GitHub Codespaces
-Other infrastructure-related student benefits
-
-These benefits should reduce initial cost where appropriate.
-
-However:
-
-A free or discounted service should not be selected if it creates unnecessary architectural complexity.
-
-The architecture should remain understandable even after student benefits expire.
-
-6. Azure
-
-Azure is a potential infrastructure provider.
-
-Potential benefits include:
-
-Student credit
-Managed PostgreSQL
-Application hosting
-Storage
-Monitoring
-Other cloud services
-
-Azure should be considered if the student benefits materially reduce early infrastructure cost.
-
-However, the project should avoid creating an unnecessarily complicated Azure architecture simply because many services are available.
-
-7. Heroku
-
-Heroku is another potential option for early application hosting.
-
-Potential advantages:
-
-Simple deployment
-Straightforward application hosting
-Student credit
-Low operational complexity
-
-Potential concerns:
-
-Credit expiration
-Long-term pricing
-Database/provider considerations
-Possible migration requirements as the product grows
-
-Heroku should be evaluated as a practical early hosting option rather than automatically selected because a credit exists.
-
-8. Vercel
-
-Vercel is a potential application-hosting option for the Next.js frontend/application layer.
-
-Potential advantages:
-
-Strong Next.js integration
-Simple deployments
-Preview deployments
-Git-based workflow
-
-Potential considerations:
-
-Production pricing
-Server-side execution characteristics
-Background job requirements
-Vendor-specific features
-Database still requires a separate provider
-
-If selected, PostgreSQL would normally remain a separate managed service.
-
-9. Database Hosting
-
-The application requires PostgreSQL.
-
-The production database should use a managed PostgreSQL service rather than manually operating a database server initially.
-
-Possible providers include:
-
-Azure Database for PostgreSQL
-Other managed PostgreSQL providers
-Suitable student-benefit providers if appropriate
-
-The final provider remains open.
-
-10. Database Requirements
-
-Production PostgreSQL should provide:
-
-Automated backups
-Encryption in transit
-Encryption at rest where available
-Access controls
-Monitoring
-Recovery options
-Reasonable storage limits
-Connection management
-Upgrade path
-
-The application should not depend on manually maintaining a PostgreSQL server during the early stage.
-
-11. Database and Application Separation
-
-The application and database should be logically separated:
-
-Application Hosting
-        ↓
-Private / Controlled Database Connection
-        ↓
-Managed PostgreSQL
-
-Database credentials must never be exposed to frontend code.
-
-12. Development Environment
-
-Local development should use:
-
-Developer Machine
-       ↓
-Local / Development PostgreSQL
-       ↓
-Next.js Application
-
-Development infrastructure should not use production data.
-
-13. Environments
-
-The project should eventually maintain at least:
-
-Development
-Staging
-Production
-
-However, a full staging environment does not necessarily need to exist from the first line of code.
-
-For the initial development phase:
-
-Local Development
-       ↓
-Production Pilot
-
-may be sufficient if appropriate safeguards exist.
-
-A dedicated staging environment should be introduced when deployment complexity or team size makes it valuable.
-
-14. Production Deployment
-
-Production deployments should be automated through GitHub Actions or the selected hosting provider's deployment integration.
-
-Preferred flow:
-
-Pull Request
-     ↓
-CI
-     ↓
-Review
-     ↓
-Merge
-     ↓
-Production Deployment
-
-Production deployment should not depend on manually copying source files.
-
-15. Deployment Safety
-
-Production deployments should include:
-
-Build validation
-Type checking
-Tests
-Environment validation
-Database migration safety
-Rollback strategy where practical
-
-Destructive database migrations require additional review.
-
-16. Database Migrations
-
-Database schema changes must be version controlled.
-
-Preferred flow:
-
-Code Change
-    ↓
-Migration
-    ↓
-Tests
-    ↓
-Review
-    ↓
-Deploy
-
-Production migrations should not be performed manually without a documented reason.
-
-17. Secrets Management
-
-Production secrets must be stored using the hosting provider's secure environment/secret mechanism or an appropriate secret-management service.
-
-Examples:
-
-Database credentials
-Authentication secrets
-WhatsApp credentials
-API keys
-Cloud credentials
-OAuth secrets
-Encryption keys
-
-Never commit production secrets to Git.
-
-18. Domain
-
-The production application will eventually use a proper domain.
-
-The domain should be selected after:
-
-Product branding is finalized
-Product direction is sufficiently validated
-Initial pilot readiness is established
-
-The project should avoid purchasing multiple domains prematurely.
-
-19. HTTPS
-
-Production traffic must use HTTPS.
-
-The hosting platform should provide or support managed TLS certificates.
-
-HTTP traffic should redirect to HTTPS where appropriate.
-
-20. Database Backups
-
-Production PostgreSQL must have automated backups.
-
-The backup strategy should define:
-
-Backup frequency
-Retention
-Recovery process
-Recovery testing
-
-A backup that has never been restored should not be assumed to be reliable.
-
-Recovery testing should be introduced before the product depends heavily on production data.
-
-21. Data Recovery
-
-Data recovery should be considered for:
-
-Accidental deletion
-Application bugs
-Failed migrations
-Database corruption
-Infrastructure failure
-
-Application-level safeguards should complement database backups.
-
-Backups are not a substitute for authorization and data-integrity controls.
-
-22. File Storage
-
-Progress photos and other user-uploaded files are future functionality.
-
-File storage remains an open decision.
-
-The initial product should avoid introducing object storage unless a real file-upload requirement exists.
-
-When file storage is introduced, it should consider:
-
-Private access
-Tenant isolation
-Signed URLs
-File size limits
-Content validation
-Malware/security considerations
-Retention
-Deletion
-Backup requirements
-23. Background Jobs
-
-The initial application may require asynchronous processing for:
-
-WhatsApp notifications
-Reminder scheduling
-Notification retries
-Scheduled membership reminders
-Future analytics jobs
-
-A queue/background-job system should not be introduced before it is necessary.
-
-For early development, simple scheduled mechanisms may be sufficient.
-
-As notification volume grows, a proper queue should be introduced.
-
-24. Caching
-
-Caching is not required for the initial architecture.
-
-Initial approach:
-
-Query PostgreSQL directly where appropriate.
-
-Caching should be introduced only after identifying:
-
-Expensive queries
-Repeated reads
-Performance bottlenecks
-High traffic
-Appropriate cache invalidation strategy
-
-Avoid introducing Redis merely because it is available.
-
-25. CDN
-
-A CDN may be used through the selected application hosting provider.
-
-It is not an independent architectural requirement for the first implementation.
-
-26. Observability
-
-Production should eventually include:
-
-Application logs
-Error tracking
-Health checks
-Basic metrics
-Database monitoring
-Notification delivery status
-
-The exact error-tracking provider remains open.
-
-27. Logging
-
-Logs must not contain:
-
-OTPs
-Passwords
-Authentication tokens
-API secrets
-Database credentials
-Private keys
-Unnecessary sensitive payment information
-
-Logs should contain enough context to debug production issues without becoming a source of sensitive-data leakage.
-
-28. Cost Strategy
-
-The initial infrastructure philosophy is:
-
-Student Benefits
-       ↓
-Low-Cost Infrastructure
-       ↓
-Pilot Gyms
-       ↓
-Paying Customers
-       ↓
-Production Infrastructure Funded by Revenue
-
-The system should not depend on unlimited free-tier resources.
-
-The architecture must remain viable when student benefits expire.
-
-29. Initial Cost Target
-
-The desired initial personal infrastructure spending is approximately:
-
-₹0–₹1,000/month where practical.
-
-This is a target rather than a hard architectural constraint.
-
-Security and reliability requirements take priority over minimizing cost at all costs.
-
-30. Vendor Lock-In
-
-Vendor lock-in should be minimized where it is easy to do so.
-
-Important boundaries include:
-
-Authentication provider
-WhatsApp provider
-Database hosting
-File storage
-Error tracking
-Background jobs
-
-However, the project should not build elaborate abstraction layers solely to eliminate every form of vendor dependency.
-
-Use clear boundaries where replacement is realistically possible.
-
-31. Initial Infrastructure Recommendation
-
-The preferred initial shape is:
-
-                   ┌─────────────────────┐
-                   │     User Browser    │
-                   │       PWA           │
-                   └──────────┬──────────┘
-                              │
-                             HTTPS
-                              │
-                   ┌──────────▼──────────┐
-                   │   Next.js App       │
-                   │   Modular Monolith  │
-                   └──────┬───────┬──────┘
-                          │       │
-                ┌─────────┘       └──────────────┐
-                │                                │
-       ┌────────▼────────┐              ┌────────▼────────┐
-       │   PostgreSQL    │              │ External APIs   │
-       │    Database     │              │ Auth / WhatsApp │
-       └─────────────────┘              └─────────────────┘
-
-No microservices are required.
-
-No Kubernetes is required.
-
-No Redis is required initially.
-
-No separate API server is required initially.
-
-No separate worker infrastructure is required until background processing justifies it.
-
-32. Scaling Strategy
-
-The expected scaling path is:
-
-Stage 1
-Single application
-+
-Managed PostgreSQL
-
-        ↓
-
-Stage 2
-Application scaling
-+
-Database optimization
-
-        ↓
-
-Stage 3
-Background jobs
-+
-Queue
-
-        ↓
-
-Stage 4
-Caching where justified
-+
-Read optimization
-
-        ↓
-
-Stage 5
-Selective service separation
-if actual requirements justify it
-
-The project should scale based on evidence rather than assumptions.
-
-33. What We Will Not Build Initially
-
-The initial architecture should not include:
-
-Kubernetes
-Microservices
-Service mesh
-Dedicated Redis cluster
-Dedicated Kafka cluster
-Complex event bus
-Multi-region deployment
-Custom infrastructure orchestration
-Self-managed database servers
-Complex infrastructure-as-code without need
-
-These may become appropriate later, but not for the initial product.
-
-34. Disaster Recovery
-
-The project should eventually document:
-
-Backup policy
-Restore process
-Recovery point objective
-Recovery time objective
-Database recovery procedure
-Deployment rollback procedure
-
-Exact RPO/RTO targets should be defined once real production requirements are understood.
-
-35. Infrastructure Ownership
-
-Infrastructure configuration should be version-controlled where practical.
-
-Production access should be limited to authorized people.
-
-Infrastructure credentials should not be shared casually.
-
-The project should maintain clear ownership of:
-
-Domain
-Cloud account
-Database
-Authentication provider
-WhatsApp provider
-Production secrets
-Billing accounts
-36. Decision
-Current Status
-
-Infrastructure architecture is defined, but final providers remain open.
-
-The initial production architecture will favor:
-
-Managed services
-Simple deployment
-PostgreSQL
-Single modular application
-Automated CI/CD
-Minimal infrastructure
-Low initial cost
-Clear provider boundaries
-37. Provider Selection Criteria
-
-Before selecting production providers, evaluate:
-
-Current pricing
-Student benefits
-Free-tier limitations
-Production suitability
-Data location/options
-Backup capabilities
-Reliability
-Scaling
-Deployment experience
-Vendor lock-in
-Exit/migration difficulty
-Security features
-
-Current provider pricing and benefit details should be verified from official provider documentation before final selection.
-
-38. Consequences
-Positive
-Low initial complexity
-Low initial cost
-Easier development
-Easier debugging
-Easier deployment
-Clear scaling path
-Reduced operational burden
-Trade-offs
-Some provider dependency
-Separate providers may eventually be required
-Scaling beyond the initial architecture will require additional work
-Free/student infrastructure will not necessarily remain free
-39. Future Reassessment
-
-Reassess infrastructure when:
-
-Paying customers increase significantly
-Database load increases
-Application traffic increases
-Notification volume increases
-Background processing becomes substantial
-Availability requirements increase
-Student benefits expire
-Current provider pricing becomes unsuitable
-Production incidents reveal infrastructure limitations
-40. Related Documents
-10-DEVOPS.md
-11-OBSERVABILITY.md
-12-SCALABILITY.md
-13-COST-INFRASTRUCTURE.md
-14-TECH-DECISIONS.md
-06-SECURITY.md
-20-CURRENT-STATE.md
-41. Approval
-
-Decision Owner: Project Owner
-
-Status: Proposed
-
-Application Host: TBD
-
-PostgreSQL Host: TBD
-
-Error Tracking: TBD
-
-File Storage: TBD
-
-Background Jobs: TBD
-
-Approval Date: N/A
+# 1. Status
+
+Proposed — awaiting owner approval. Nothing in this document has been
+provisioned, purchased, or deployed.
+
+# 2. Context and constraints
+
+gym-saas is a multi-tenant gym-management SaaS: Next.js 16 + TypeScript
+modular monolith, Prisma 7 over PostgreSQL (12 migrations, verified
+against PostgreSQL 16), Clerk for owner/staff authentication, 2Factor
+SMS OTP for members (live path not yet verified). The repository is
+already host-portable: a Procfile maps the release phase to
+`npx prisma migrate deploy`, Node is pinned to `20.x`, and the Prisma
+CLI ships in production dependencies.
+
+Binding constraints carried from the existing ADR 004 requirements and
+the project's engineering standards:
+
+- Managed PostgreSQL only; no self-managed database server initially
+  (original §9–§10).
+- Automated backups, and **recovery testing before the product depends
+  on production data** (original §20). A backup that has never been
+  restored is not assumed reliable.
+- The database layer is sized for a small connection allowance: the
+  application pool is pinned at `max` 8 (H1), so the whole deployment
+  needs roughly 12 connections (web 8 + release/migrations ~2 + ops ~2).
+- Target initial spend is ₹0–1,000/month *where practical* — a target,
+  not a hard constraint; security and reliability take priority
+  (original §29).
+- Initial scale is a single-gym pilot growing to perhaps 10–20 gyms /
+  1,500–3,000 members; simplicity and reliability over theoretical scale.
+- No Redis, queues, microservices, or multi-region deployment initially
+  (original §33). GitHub Actions CI already exists and stays the CI.
+- Gyms and members are in India. **None of Render, Railway, or Heroku
+  offers an India region** on the tiers considered (verified §10);
+  Singapore is the nearest region on Render and Railway, and Heroku's
+  Common Runtime is US/EU only. No general data-localization
+  requirement has been identified for this category of data under
+  India's DPDP Act; sector-specific regimes have not been assessed
+  (the app records payments but does not itself process card or
+  payment-system data). Residency is therefore treated here as an
+  owner preference and latency question, not a legal blocker
+  identified here (not legal advice — the owner may want
+  independent confirmation).
+- File storage (original §22) and background jobs (original §23)
+  remain open decisions and are out of scope for this hosting
+  decision; the §5 estimate assumes no object storage and no
+  background workers.
+
+# 3. Options considered
+
+Three realistic architectures were evaluated. A VPS/self-managed
+PostgreSQL option is excluded by the constraints above; Vercel +
+separate Postgres splits the application across two vendors and bills
+serverless execution per use, which fits this always-on,
+connection-pinned workload worse than a single platform — it is not
+carried into the comparison.
+
+## 3.1 Render (web service + managed PostgreSQL, Singapore)
+
+- Next.js runs as a standard Node web service; pre-deploy command
+  (`prisma migrate deploy`) is officially supported on paid web
+  services and a failure fails the deploy.
+- PostgreSQL: smallest paid instance (Basic-256mb, 256 MB RAM) allows
+  **100 connections** — far above the ~12 budget. PITR is included on
+  all paid databases with a **3-day recovery window on a Hobby
+  workspace (7 days on Pro)**; logical exports can be created on
+  demand and are retained seven days after creation — they are
+  not scheduled automatically.
+- Flat, predictable pricing; custom domains with automatically
+  provisioned/renewed TLS; secrets as dashboard environment variables;
+  built-in logs and metrics.
+- Free tiers are unsuitable for a pilot (web spins down after
+  15 minutes idle; free Postgres expires after 30 days).
+
+## 3.2 Railway (web service + PostgreSQL, Singapore `asia-southeast1-eqsg3a`)
+
+- Pre-deploy command is now verified as officially supported (runs
+  between build and deploy; failure halts the deployment) — this was
+  unverified in the October 15 comparison.
+- PostgreSQL PITR via pgBackRest continuous WAL archiving is opt-in,
+  with weekly full + daily differential backups and a **~4-week restore
+  window** — the strongest recovery window of the three — restoring to
+  a *new* service beside the source; no separate PITR fee.
+- Metered pricing (Hobby $5/mo + usage) makes the monthly bill an
+  estimate, not a flat figure.
+- **Decisive unknown:** Railway's official documentation states no
+  plan gate for PITR or the Singapore region, but multiple independent
+  reports say the dashboard requires the **Pro plan ($20/mo)** for
+  volume backups/PITR. This cannot be settled from documentation; it
+  needs a no-spend check in the Railway dashboard. If Pro is required,
+  Railway's floor is ~$20/mo before usage and it loses on cost.
+
+## 3.3 Heroku (Basic dyno + Heroku Postgres Essential, US/EU)
+
+- The repository is already Heroku-compatible (Procfile release phase),
+  and the GitHub Student offer ($13/mo for 24 months) would cover the
+  ~$12/mo stack for about two years.
+- Essential-0 Postgres ($5/mo) allows only **20 connections** — workable
+  against the ~12 budget but with little headroom — and provides **no
+  point-in-time recovery**: rollbacks/PITR exist only on Standard tier
+  or higher. Essential keeps daily logical backups (retained 7 days,
+  plus 1 weekly), so a restore can lose **up to ~24 hours** of records —
+  including payment records. Heroku documents that scheduled
+  PGBackups failures generate no notifications — they must be
+  checked manually.
+- US/EU regions only on these tiers (worst latency of the three for
+  Indian users).
+
+## 3.4 Comparison
+
+| Criterion | Render | Railway | Heroku |
+| --- | --- | --- | --- |
+| Pilot shape | Starter-class web + Basic-256mb PG, Singapore | Web + PG, Singapore | Basic dyno + Essential-0 PG, US/EU |
+| Monthly cost (est., §5) | ~₹1,264–1,378 flat | ~₹950–1,615 metered on Hobby *if* Hobby suffices; ₹1,900+ if Pro required | ~₹1,140; ~₹0 out-of-pocket under student credit |
+| India region | None (Singapore nearest) | None (Singapore nearest) | None (US/EU only) |
+| PG connections | 100 | ~100 (third-party reports; not officially confirmed) | 20 (Essential-0) |
+| PITR | Yes — 3-day window (Hobby ws) / 7-day (Pro ws) | Yes — ~4-week window, opt-in | **No** on Essential (Standard+ only) |
+| Backup cadence/retention | Continuous (PITR); on-demand logical exports retained 7 days after creation | Weekly full + daily differential, ~4 weeks | Daily logical, 7-day retention + 1 weekly |
+| Restore shape | PITR to a point within window | Restore creates a new PG service | Restore from daily backup (≤ ~24 h data loss) |
+| Pre-deploy migrations | Supported; failure fails deploy | Supported; failure halts deploy | Procfile release phase (already in repo) |
+| Secrets/env separation | Dashboard env vars per service | Service variables per environment | Config vars per app |
+| Custom domain + HTTPS | Included; automatic TLS | Included; automatic TLS | Included on paid dynos; automatic TLS |
+| Logs/monitoring | Built-in logs/metrics; external error tracking separate (ADR 007) | Built-in logs/metrics | Built-in logs; add-ons for more |
+| Pricing model | Flat per instance | Metered (RAM/CPU/volume/egress) | Flat per dyno/plan |
+| Lock-in | Low — standard PG, portable Next.js | Low — standard PG | Low–moderate — platform conventions (Procfile already abstracted) |
+| Operational complexity | Lowest of the three at this scale | Low; metered cost needs watching | Lowest operationally, weakest recovery |
+
+# 4. Recommended architecture
+
+**Adopt Render (Singapore) for the pilot**, in two gated stages:
+
+- **Stage 0 — staging (synthetic data only):** Hobby workspace ($0),
+  one paid web service (Starter class, 512 MB), smallest paid
+  PostgreSQL (Basic-256mb) in Singapore; build `npm run build`, start
+  `npm start`, pre-deploy `npx prisma migrate deploy`; reuse the
+  existing CI Clerk *development* instance; `TWOFACTOR_API_KEY` unset
+  initially (member OTP returns 503; the app boots and staff flows
+  work); a free external uptime ping on `/api/health`.
+  **Exit criterion: a timed PITR restore drill** (§6) must pass before
+  any real data is considered.
+- **Pilot (first real gym):** same shape, plus a production Clerk
+  instance and keys, a 2Factor account + API key with one verified
+  live OTP round-trip, and a custom domain. Workspace moves to Pro
+  ($25/mo) only if the 7-day PITR window or other Pro features are
+  wanted — not required for the pilot.
+
+Why Render: it is the only option that is simultaneously flat-priced
+inside a predictable band, PITR-capable at the entry tier, generous on
+connections (100 vs a ~12 budget), Singapore-hosted, and fully verified
+from official documentation — every load-bearing figure in §3.1 is
+sourced, whereas Railway's best case depends on an unverified plan
+gate and Heroku's recovery posture (no PITR, up to ~24 h loss) is a
+poor fit for payment records.
+
+Railway remains the documented fallback: if the owner runs the
+no-spend dashboard check and Hobby *does* allow PITR + Singapore,
+Railway's ~4-week recovery window is genuinely better and the
+decision can be revisited before provisioning. Heroku remains viable
+only if the owner formally accepts the ~24 h recovery-point exposure
+in this ADR — recommended against.
+
+# 5. Cost estimate and assumptions
+
+Rate: **USD/INR 95.01** (verified 2026-10-18). Assumptions: one
+always-on small web instance; Postgres data ≤ 5 GB; low egress
+(single-gym pilot → a few gyms); no background workers; GitHub Actions
+on the existing plan; error tracking on a free tier initially
+(ADR 007 is a separate decision).
+
+| Option | USD/mo | INR/mo (approx.) | Notes |
+| --- | --- | --- | --- |
+| Render (recommended) | $13.30–14.50 | **₹1,264–1,378** | $7 web + $6 PG compute + PG storage at $0.30/GB/mo (1 GB minimum; up to 5 GB within this range) |
+| Railway on Hobby (if sufficient) | ~$10–17 | ~₹950–1,615 | $5 plan + metered usage for an always-on small service; estimate, not a cap |
+| Railway if Pro required | $20+ usage | ₹1,900+ | Floor before usage |
+| Heroku | $12 | ~₹1,140 | $7 Basic + $5 Essential-0; student credit $312 ≈ 24 months at $13/mo, Heroku products only, card required, no rollover |
+
+**Included:** web hosting, managed Postgres, TLS, the platform
+features in §3.4. **Excluded:** domain registration (~₹800–1,200/yr
+when purchased), 2Factor SMS charges (per-message, usage-dependent,
+billed by 2Factor), any paid error-tracking tier, bandwidth beyond
+plan allowances (Render meters bandwidth), taxes and card
+currency-conversion charges on USD billing, the owner's time.
+The Render figure exceeds the ₹0–1,000 target in original §29; that
+target explicitly yields to reliability requirements, and no verified
+option with PITR lands under it (Heroku is cheaper only by giving up
+PITR; Railway only if the unverified Hobby assumption holds).
+
+# 6. Security, backups, and disaster recovery
+
+- **Secrets:** only in the provider's environment mechanism — never in
+  the repository (original §17). Production Clerk keys and
+  `TWOFACTOR_API_KEY` are provisioned through the secure flow at
+  deploy time; staging and production use separate services, separate
+  databases, and separate Clerk instances. Production access is
+  limited to the owner.
+- **Backups (Render, recommended):** PITR with a 3-day window on the
+  Hobby workspace (7 days on Pro), plus logical exports, which are
+  created on demand (not scheduled) and retained seven days after
+  creation. PITR is the primary recovery mechanism. The newest
+  restorable point trails real time by at least ~10 minutes —
+  Render does not allow a restore target within ten minutes of the
+  current time — so the effective recovery point is minutes-scale,
+  not zero; recovery time is dominated by instance provisioning +
+  restore + verification — to be measured by the drill, not assumed.
+- **Restore drill (mandatory before real data, per original §20):**
+  restore the staging database to a point 1 hour in the past onto a
+  parallel instance; boot the app against it; verify row counts on
+  members/payments and a staff sign-in; record elapsed time. Repeat
+  after any provider/plan change and at least quarterly during the
+  pilot. **No backup or drill exists yet; nothing here claims
+  otherwise.**
+- **Data protection:** for Render (the recommended option), the
+  documentation states databases are encrypted at rest with AES-256
+  — including backups — and external connections are always
+  TLS-encrypted. Database access controls (IP allow lists) are
+  configured at provisioning. Tenant isolation and
+  authorization remain application responsibilities (unchanged).
+
+# 7. Deployment and migration strategy
+
+- Deploy from GitHub `main` on the provider's Git integration; CI
+  (GitHub Actions) must be green first — the provider deploy is not a
+  substitute for CI.
+- Migrations run in the pre-deploy step (`npx prisma migrate deploy`);
+  a failing migration fails the deploy and the previous release keeps
+  serving (verified behaviour on Render; same on Railway).
+- Migration discipline stays expand-and-contract (repo standards):
+  a code rollback never requires a database rollback, and destructive
+  changes ship in a later release than the code that stops using the
+  old shape. The CI `db-upgrade` job rehearses every release's
+  migrations against the previous release's seeded schema before they
+  can reach a populated database.
+- Rollback of a bad release = redeploy the previous release's commit;
+  database state is handled by the expand-and-contract rule above or,
+  worst case, the §6 restore path.
+
+# 8. Risks and mitigations
+
+| Risk | Mitigation |
+| --- | --- |
+| Railway's PITR plan gate is unverifiable from docs (affects only the fallback) | No-spend dashboard check before any Railway commitment; Render is the default and needs no such check |
+| Render exceeds the ₹1,000 target (~₹1,264–1,378) | Target is explicitly subordinate to reliability (original §29); the cheaper options sacrifice PITR or certainty |
+| No India region on any option → latency from Singapore (~tens of ms) and a residency preference unmet | Accept for the pilot (workload is latency-tolerant); revisit if a provider launches India or residency becomes a customer requirement |
+| Single-instance availability (no HA at entry tiers on all three) | Accepted for a pilot; uptime ping + provider status; revisit if the §5 scale assumptions are exceeded or availability requirements grow |
+| PITR window is only 3 days on the Hobby workspace — a problem discovered later may be unrecoverable | On-demand logical exports can supplement the window only when actually created (retained 7 days after creation; not scheduled); drill discipline; move the workspace to Pro (7-day window) when real payment volume justifies ~₹2,375/mo more |
+| Student-credit dependence (Heroku path only) | Not on the recommended path; if ever used, the architecture must remain viable after expiry (original §5) |
+| Metered-cost surprise (Railway path only) | Not on the recommended path; Render is flat |
+
+# 9. Open questions requiring owner approval
+
+1. **Budget:** approve ~₹1,264–1,378/month for the recommended Render
+   shape, above the ₹0–1,000 target — or direct a cheaper option with
+   its trade-off accepted explicitly?
+2. **Region/residency:** is Singapore acceptable for the pilot, given
+   no evaluated provider offers India on these tiers?
+3. **Recovery expectations:** is a 3-day PITR window, on-demand
+   logical exports, and a pre-launch restore drill sufficient for pilot
+   payment records, or is the Pro workspace's 7-day window required
+   from day one?
+4. **Usage/growth:** are the §5 assumptions right (one pilot gym,
+   ≤ 5 GB data, low egress, no workers) for the first months?
+5. **Platform preference:** managed platform (recommended) vs cloud
+   infrastructure (e.g. Azure with student credit, original §6) — the
+   latter was not costed here because it raises operational complexity
+   against the original text's own simplicity rule; approve excluding it,
+   or request a costed comparison?
+6. **Railway check:** run the no-spend dashboard check (does Hobby
+   allow PITR + Singapore?) before final sign-off, or proceed on
+   Render without it?
+7. **Timing:** when is Stage 0 provisioning authorized (it incurs the
+   §5 spend), and is a custom domain purchased for the pilot or
+   deferred (original §18)?
+
+# 10. Official sources and research date
+
+Researched 2026-10-18 (first verification pass 2026-10-14/15;
+differences found on re-verification are noted). Official vendor
+sources only:
+
+- Render pricing & cost article — https://render.com/articles/how-much-does-cloud-application-hosting-cost-for-small-businesses (Starter-class web + Basic-256mb PG ≈ $13/mo combined; workspace Hobby $0 / Pro $25; free-tier limits). The individual $7/$6 split was verified 2026-10-14 from render.com/pricing; the pricing page's tables are client-rendered and the split could not be re-extracted on 2026-10-18, but Render's own article confirms the combined figure for exactly this pairing.
+- Render Postgres backups/PITR — https://render.com/docs/postgresql-backups (PITR on all paid plans; 3-day window Hobby workspace, 7-day Pro+; logical exports 7 days).
+- Render Postgres connections/billing — https://render.com/docs/postgresql-creating-connecting (100 connections < 8 GB RAM; storage $0.30/GB/mo on flexible plans).
+- Render regions — https://render.com/docs/regions (Singapore available; no India region).
+- Render deploys (pre-deploy command) — https://render.com/docs/deploys.md ; custom domains/TLS — https://render.com/docs/custom-domains .
+- Railway pricing — https://docs.railway.com/pricing and https://docs.railway.com/pricing/plans (Hobby $5, Pro $20, subscription counts toward usage; RAM $10/GB/mo, CPU $20/vCPU/mo, volume $0.15/GB/mo, egress $0.05/GB).
+- Railway PITR — https://docs.railway.com/volumes/point-in-time-recovery (pgBackRest WAL archiving, ~4-week window, restore to a new service, no separate fee; **no plan gate stated** — the Pro-requirement reports are third-party and unverified).
+- Railway regions — https://docs.railway.com/deployments/regions (Singapore `asia-southeast1-eqsg3a`; no India region).
+- Railway pre-deploy command — https://docs.railway.com/deployments/pre-deploy-command (verified 2026-10-18; previously unverified).
+- Heroku pricing — https://www.salesforce.com/heroku/pricing/ (Basic dyno $7/mo).
+- Heroku Postgres plans — https://devcenter.heroku.com/articles/heroku-postgres-plans (Essential-0/1/2: $5/$9/$20; 20/20/40 connections).
+- Heroku data safety — https://devcenter.heroku.com/articles/heroku-postgres-data-safety-and-continuous-protection (no rollbacks/PITR on Essential; Standard+ only).
+- Heroku PGBackups — https://devcenter.heroku.com/articles/heroku-postgres-backups (Essential: daily backups retained 7 days + 1 weekly; manual cap 5 — updated 2026-10-08; this corrects the 1–2-day retention recorded in the October comparison).
+- Heroku regions — https://devcenter.heroku.com/articles/regions (Common Runtime: US/EU only).
+- Heroku for GitHub Students — https://help.heroku.com/FFN35ZM2 ($13/mo × 24 months, no rollover).
+- USD/INR 95.01 — Finnhub USD/INR quote (95.0137), retrieved 2026-10-18.
+
+Estimates vs facts: plan prices, PITR terms, regions, and connection
+limits above are verified facts from the sources listed. Railway's
+monthly total is an estimate from metered rates; all INR figures are
+conversions at the stated rate, not vendor INR billing.

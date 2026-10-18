@@ -117,6 +117,66 @@ jobs:
       - name: PostgreSQL integration tests (Vitest)
         run: npm run test:db
 
+  # Migration upgrade-path test (Phase B): migrate a disposable
+  # PostgreSQL 16 service from the pinned previous release (a046fcb,
+  # 10 migrations), seed a small synthetic fixture at that baseline
+  # schema, then upgrade the same database to HEAD and prove the
+  # seeded rows survive (scripts/run-upgrade-test.mjs). This is the
+  # only job that ever migrates a non-empty database. Informational —
+  # not a required check — mirroring the e2e-auth posture below.
+  # Disposable service database only: before contacting any database,
+  # the runner enforces a strict disposable-database policy — the name
+  # must match the anchored gymsaas_upgrade convention with no
+  # production-like segments, the host must be loopback, no
+  # target-overriding query parameters are allowed, and
+  # UPGRADE_TEST_CONFIRM_DATABASE must exactly name the database.
+  db-upgrade:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gymsaas_test
+          POSTGRES_PASSWORD: gymsaas_test_password
+          POSTGRES_DB: gymsaas_upgrade
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gymsaas_test -d gymsaas_upgrade"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Job-level: overrides the workflow placeholder for this job only.
+      # Points at the disposable service container, never at a real
+      # deployment or developer database.
+      DATABASE_URL: postgresql://gymsaas_test:gymsaas_test_password@localhost:5432/gymsaas_upgrade
+      BASELINE_DIR: upgrade-baseline
+      UPGRADE_TEST_CONFIRM_DATABASE: gymsaas_upgrade
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the pinned baseline release
+        uses: actions/checkout@v4
+        with:
+          ref: a046fcb5a886f1405b55af7a5fd090c19d7d6af1
+          path: upgrade-baseline
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Migration upgrade-path test (seeded)
+        run: node scripts/run-upgrade-test.mjs
+
   # Authenticated Playwright smoke test: a real Clerk sign-in by a
   # test-mode OWNER on the dedicated CI development instance, against a
   # disposable PostgreSQL 16 service. Isolated from the build and

@@ -17,12 +17,27 @@
 // Thresholds are the audit's targets for the covered surfaces:
 // reads p95 < 500 ms, writes p95 < 800 ms, errors < 0.5%.
 //
-// Do not run until: the smoke test passes, this file has been
-// reviewed, and the pool-sweep plan (DB_POOL_MAX 8 → 12 → 16) is
-// agreed. A guarded wrapper for this scenario does not exist yet —
-// run directly only under the conditions in README.md:
-//   BASE_URL=http://localhost:3000 ACTORS_FILE=scripts/load/actors.local.json \
-//     k6 run scripts/load/k6/baseline.js
+// Actor mapping: the seed produces 28 actors and actorForVu maps
+// VU n to actors[(n - 1) % 28], so at 50 VUs actors 1–22 are each
+// driven by TWO virtual users concurrently and actors 23–28 by
+// one. That reuse is intentional: the paired VUs issue simultaneous
+// duplicate check-ins for the same member, exercising the
+// one-open-session rule under genuine concurrency — the first
+// writer creates the session and concurrent repeats must return
+// already_checked_in, never a second open session. Expected
+// post-run state: exactly 28 new attendance rows, one open session
+// per actor member.
+//
+// Prerequisite: the smoke test passes (it did, 2026-10-19). Run
+// ONLY via the guarded wrapper (same safety model as the smoke
+// wrapper: disposable-database guard + explicit confirmation,
+// actors/database match, and a seeded-session binding probe before
+// k6 is invoked):
+//   DATABASE_URL=… LOAD_TEST_CONFIRM_DATABASE=… \
+//     node scripts/load/run-baseline.mjs
+// The baseline runs against the application's DEFAULT pool
+// configuration (max 8). The DB_POOL_MAX sweep is a peak-stage
+// question and is not part of this stage.
 import { sleep } from "k6";
 import { actorForVu, memberIteration } from "./lib.js";
 

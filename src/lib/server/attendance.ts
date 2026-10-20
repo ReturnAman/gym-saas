@@ -231,6 +231,20 @@ interface SessionRow {
 }
 
 /**
+ * The exact columns the member-own attendance reads consume — the
+ * SessionRow shape above. Selecting them explicitly keeps the rest
+ * of the AttendanceSession row off the wire.
+ */
+const SESSION_ROW_SELECT = {
+  id: true,
+  memberId: true,
+  checkInAt: true,
+  checkOutAt: true,
+  source: true,
+  checkedInBy: true,
+} satisfies Prisma.AttendanceSessionSelect;
+
+/**
  * Resolve the check-in actors of the given sessions to their roles in
  * this organization (the application User record carries no display
  * name) — the same approach as payment history's confirmer roles.
@@ -741,6 +755,7 @@ export async function listOwnAttendance(
     },
     orderBy: { checkInAt: "desc" },
     take: Math.max(1, Math.floor(limit)),
+    select: SESSION_ROW_SELECT,
   });
   const roleByUserId = await actorRolesByUserId(
     context.session.organizationId,
@@ -766,6 +781,7 @@ export async function getOwnOpenSession(
       memberId: member.id,
       checkOutAt: null,
     },
+    select: SESSION_ROW_SELECT,
   });
   if (!session) return null;
 
@@ -774,4 +790,50 @@ export async function getOwnOpenSession(
     [session],
   );
   return toSessionItem(session, roleByUserId);
+}
+
+/**
+ * Everything the member attendance page renders, in one composition:
+ * the member's open session plus their history, with the check-in
+ * actors' roles resolved ONCE for the union of both result sets.
+ * (Calling getOwnOpenSession and listOwnAttendance separately — as
+ * the page did before — resolved the same roles twice per render.)
+ * Scoping and null semantics mirror those two functions exactly:
+ * everything is keyed by the verified session context, and a context
+ * whose linked Member record no longer exists yields null history.
+ */
+export async function getOwnAttendancePage(
+  context: MemberSessionContext,
+  limit = 30,
+): Promise<{
+  openSession: AttendanceSessionItem | null;
+  history: AttendanceSessionItem[] | null;
+}> {
+  const member = context.member;
+  if (!member) return { openSession: null, history: null };
+
+  const scope = {
+    organizationId: context.session.organizationId,
+    memberId: member.id,
+  };
+  const [openRow, historyRows] = await Promise.all([
+    db.attendanceSession.findFirst({
+      where: { ...scope, checkOutAt: null },
+      select: SESSION_ROW_SELECT,
+    }),
+    db.attendanceSession.findMany({
+      where: scope,
+      orderBy: { checkInAt: "desc" },
+      take: Math.max(1, Math.floor(limit)),
+      select: SESSION_ROW_SELECT,
+    }),
+  ]);
+  const roleByUserId = await actorRolesByUserId(
+    context.session.organizationId,
+    openRow ? [...historyRows, openRow] : historyRows,
+  );
+  return {
+    openSession: openRow ? toSessionItem(openRow, roleByUserId) : null,
+    history: historyRows.map((row) => toSessionItem(row, roleByUserId)),
+  };
 }

@@ -7,8 +7,7 @@ import {
   formatKolkataTime,
 } from "@/lib/attendance";
 import {
-  getOwnOpenSession,
-  listOwnAttendance,
+  getOwnAttendancePage,
 } from "@/lib/server/attendance";
 import { requireMemberContext } from "@/lib/server/member-session";
 
@@ -35,10 +34,7 @@ export default async function MemberAttendancePage() {
     );
   }
 
-  const [openSession, history] = await Promise.all([
-    getOwnOpenSession(context),
-    listOwnAttendance(context, 30),
-  ]);
+  const { openSession, history } = await getOwnAttendancePage(context, 30);
   const sessions = history ?? [];
 
   return (

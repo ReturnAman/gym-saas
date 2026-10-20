@@ -50,6 +50,7 @@ import {
   AttendanceNoMembershipError,
   AttendanceNotFoundError,
   checkInSelf,
+  getOwnAttendancePage,
   getOwnOpenSession,
   listOwnAttendance,
 } from "@/lib/server/attendance";
@@ -270,6 +271,14 @@ describe("listOwnAttendance", () => {
       where: { organizationId: ORG_ID, memberId: MEMBER_ID },
       orderBy: { checkInAt: "desc" },
       take: 30,
+      select: {
+        id: true,
+        memberId: true,
+        checkInAt: true,
+        checkOutAt: true,
+        source: true,
+        checkedInBy: true,
+      },
     });
     expect(items).toHaveLength(2);
     expect(items?.[0]).toEqual({
@@ -312,6 +321,14 @@ describe("getOwnOpenSession", () => {
         memberId: MEMBER_ID,
         checkOutAt: null,
       },
+      select: {
+        id: true,
+        memberId: true,
+        checkInAt: true,
+        checkOutAt: true,
+        source: true,
+        checkedInBy: true,
+      },
     });
     expect(item).toEqual({
       id: SESSION_ID,
@@ -331,5 +348,126 @@ describe("getOwnOpenSession", () => {
   it("returns null (and queries nothing) when the context has no linked Member", async () => {
     await expect(getOwnOpenSession(memberContext(null))).resolves.toBeNull();
     expect(mockSessionFindFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe("getOwnAttendancePage", () => {
+  it("resolves actor roles ONCE for the union of the open session and history", async () => {
+    mockSessionFindFirst.mockResolvedValue(
+      sessionRow({ checkedInBy: STAFF_USER_ID, source: "MANUAL" as const }),
+    );
+    mockSessionFindMany.mockResolvedValue([
+      sessionRow(),
+      sessionRow({
+        id: "older-session",
+        checkedInBy: STAFF_USER_ID,
+        source: "MANUAL" as const,
+        checkInAt: new Date("2026-10-09T01:00:00.000Z"),
+        checkOutAt: new Date("2026-10-09T03:00:00.000Z"),
+      }),
+    ]);
+    mockOrgMembershipFindMany.mockResolvedValue([
+      { userId: SELF_USER_ID, role: "MEMBER" },
+      { userId: STAFF_USER_ID, role: "STAFF" },
+    ]);
+
+    const { openSession, history } = await getOwnAttendancePage(
+      linkedContext(),
+    );
+
+    expect(mockOrgMembershipFindMany).toHaveBeenCalledTimes(1);
+    const roleQuery = mockOrgMembershipFindMany.mock.calls[0]?.[0];
+    expect(roleQuery?.where.organizationId).toBe(ORG_ID);
+    expect(new Set(roleQuery?.where.userId.in)).toEqual(
+      new Set([SELF_USER_ID, STAFF_USER_ID]),
+    );
+    expect(openSession?.checkedInByRole).toBe("STAFF");
+    expect(history).toHaveLength(2);
+    expect(history?.[0]?.checkedInByRole).toBe("MEMBER");
+    expect(history?.[1]?.checkedInByRole).toBe("STAFF");
+  });
+
+  it("queries both session reads with the context ids and the SessionRow select", async () => {
+    mockSessionFindFirst.mockResolvedValue(null);
+    mockSessionFindMany.mockResolvedValue([]);
+    mockOrgMembershipFindMany.mockResolvedValue([]);
+
+    const { openSession, history } = await getOwnAttendancePage(
+      linkedContext(),
+    );
+
+    const select = {
+      id: true,
+      memberId: true,
+      checkInAt: true,
+      checkOutAt: true,
+      source: true,
+      checkedInBy: true,
+    };
+    expect(mockSessionFindFirst).toHaveBeenCalledWith({
+      where: {
+        organizationId: ORG_ID,
+        memberId: MEMBER_ID,
+        checkOutAt: null,
+      },
+      select,
+    });
+    expect(mockSessionFindMany).toHaveBeenCalledWith({
+      where: { organizationId: ORG_ID, memberId: MEMBER_ID },
+      orderBy: { checkInAt: "desc" },
+      take: 30,
+      select,
+    });
+    expect(openSession).toBeNull();
+    expect(history).toEqual([]);
+  });
+
+  it("returns null history (and queries nothing) when the context has no linked Member", async () => {
+    await expect(
+      getOwnAttendancePage(memberContext(null)),
+    ).resolves.toEqual({ openSession: null, history: null });
+    expect(mockSessionFindFirst).not.toHaveBeenCalled();
+    expect(mockSessionFindMany).not.toHaveBeenCalled();
+  });
+
+  it("returns history with roles resolved once when there is no open session", async () => {
+    mockSessionFindFirst.mockResolvedValue(null);
+    mockSessionFindMany.mockResolvedValue([
+      sessionRow(),
+      sessionRow({
+        id: "older-session",
+        checkedInBy: STAFF_USER_ID,
+        source: "MANUAL" as const,
+        checkInAt: new Date("2026-10-09T01:00:00.000Z"),
+        checkOutAt: new Date("2026-10-09T03:00:00.000Z"),
+      }),
+    ]);
+    mockOrgMembershipFindMany.mockResolvedValue([
+      { userId: SELF_USER_ID, role: "MEMBER" },
+      { userId: STAFF_USER_ID, role: "STAFF" },
+    ]);
+
+    const { openSession, history } = await getOwnAttendancePage(
+      linkedContext(),
+    );
+
+    expect(openSession).toBeNull();
+    expect(history).toHaveLength(2);
+    expect(history?.[0]).toEqual({
+      id: SESSION_ID,
+      memberId: MEMBER_ID,
+      checkInAt: CHECK_IN.toISOString(),
+      checkOutAt: null,
+      source: "QR",
+      checkedInByRole: "MEMBER",
+    });
+    expect(history?.[1]?.checkedInByRole).toBe("STAFF");
+    expect(history?.[1]?.checkOutAt).toBe("2026-10-09T03:00:00.000Z");
+    expect(mockOrgMembershipFindMany).toHaveBeenCalledTimes(1);
+    const roleQuery = mockOrgMembershipFindMany.mock.calls[0]?.[0];
+    expect(roleQuery?.where.organizationId).toBe(ORG_ID);
+    expect(new Set(roleQuery?.where.userId.in)).toEqual(
+      new Set([SELF_USER_ID, STAFF_USER_ID]),
+    );
   });
 });

@@ -25,8 +25,7 @@ describe("member attendance page scoping", () => {
   });
 
   it("queries attendance only through the context-scoped service calls", () => {
-    expect(PAGE).toMatch(/listOwnAttendance\(context, 30\)/);
-    expect(PAGE).toMatch(/getOwnOpenSession\(context\)/);
+    expect(PAGE).toMatch(/getOwnAttendancePage\(context, 30\)/);
   });
 
   it("accepts no client-supplied scoping input at all", () => {

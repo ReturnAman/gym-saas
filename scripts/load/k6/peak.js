@@ -19,8 +19,19 @@
 // lines during this stage is the pool-saturation signal — see the
 // instrumentation section of README.md.
 //
-// Do not run until the baseline stage passes and this file has been
-// reviewed. A guarded wrapper for this scenario does not exist yet.
+// Entry condition met: the baseline stage passed (2026-10-19).
+// Run ONLY via the guarded wrapper (same safety model as the
+// baseline wrapper: disposable-database guard + explicit
+// confirmation, actors/database match, and a seeded-session
+// binding probe — origin-checked — before k6 is invoked):
+//   DATABASE_URL=<redacted>
+//     node scripts/load/run-peak.mjs
+// Expected post-run state mirrors the baseline invariant: exactly
+// 28 new attendance rows and one open session per actor member.
+// The burst adds only duplicate attempts — every actor is already
+// checked in by the main scenario before the burst starts, and an
+// actor the burst somehow reached first would simply own that one
+// session instead.
 import { sleep } from "k6";
 import { actorForVu, actors, checkIn, memberIteration } from "./lib.js";
 

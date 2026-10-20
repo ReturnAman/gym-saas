@@ -1,11 +1,17 @@
-# Local load-test tooling — smoke slice
+# Local load-test tooling
 
-Synthetic-data seeding and a k6 smoke test for the Gym SaaS app,
-**local use only**. This is the first load-testing slice: it covers
-the smoke path (5 virtual users, member-session surfaces). The
-50/150/300-user scenarios from the load-test readiness audit are NOT
-implemented yet, and nothing here says anything about capacity until
-they are.
+Synthetic-data seeding and guarded k6 load tests for the Gym SaaS
+app, **local use only**. Four scenarios exercise member-session
+surfaces at increasing load: smoke (5 virtual users), baseline
+(50), peak (150 plus a check-in burst), and spike/soak (300).
+Smoke, baseline, and peak each run ONLY through a guarded wrapper
+(`run-smoke.mjs`, `run-baseline.mjs`, `run-peak.mjs`) that
+verifies the safety chain in the next section before k6 is
+invoked; spike/soak has no wrapper yet and has never run. Results
+so far are local-hardware evidence about member paths only —
+nothing here establishes that the app supports the 14-gym /
+1,700-member target on any real hosting (see Known limitations
+for the executed history).
 
 ## Safety model (read this first)
 
@@ -74,18 +80,18 @@ Prerequisites: Node 20, a local PostgreSQL 16, and the k6 binary
 createdb gymsaas_load_local        # or your provider's equivalent
 
 # 2. Apply the application schema
-DATABASE_URL=postgres://<user>@localhost:5432/gymsaas_load_local \
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
   npx prisma migrate deploy
 
 # 3. Seed synthetic data (defaults: 14 gyms, ~1,700 members)
-DATABASE_URL=postgres://<user>@localhost:5432/gymsaas_load_local \
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
 LOAD_TEST_CONFIRM_DATABASE=gymsaas_load_local \
   node scripts/load/seed-load-test.mjs
 
 # 4. Start the app against the SAME database (dummy Clerk keys are
 #    enough: member paths never call Clerk, and the CI build does the
 #    same; leave TWOFACTOR_API_KEY unset)
-DATABASE_URL=postgres://<user>@localhost:5432/gymsaas_load_local \
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
 APP_URL=http://localhost:3000 \
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ZHVtbXkubG9jYWwk \
 CLERK_SECRET_KEY=sk_test_dummy \
@@ -106,7 +112,7 @@ load-relevant read path uses it.
 ## Running the smoke test
 
 ```bash
-DATABASE_URL=postgres://<user>@localhost:5432/gymsaas_load_local \
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
 LOAD_TEST_CONFIRM_DATABASE=gymsaas_load_local \
   node scripts/load/run-smoke.mjs
 ```
@@ -130,10 +136,10 @@ pristine first-pass run.
 
 | Script | Shape | Status |
 | --- | --- | --- |
-| `k6/smoke.js` | 5 VU, 5 min | Implemented; run via `run-smoke.mjs` |
-| `k6/baseline.js` | 50 VU, 15 min | **Prepared — not yet run** |
-| `k6/peak.js` | 150 VU, 15 min + 30/min check-in burst for 5 min | **Prepared — not yet run** |
-| `k6/spike-soak.js` | ramp to 300 VU, 5-min spike, 150 VU for 30-min soak | **Prepared — not yet run** |
+| `k6/smoke.js` | 5 VU, 5 min | Implemented; executed 2026-10-19 (recorded as passed); run via `run-smoke.mjs` |
+| `k6/baseline.js` | 50 VU, 15 min | Executed 2026-10-19 — **passed** its configured thresholds; wrapper-only via `run-baseline.mjs` |
+| `k6/peak.js` | 150 VU, 15 min + 30/min check-in burst for 5 min | Executed 2026-10-19 — **failed** the read-latency thresholds, passed correctness and reconciliation; wrapper-only via `run-peak.mjs` |
+| `k6/spike-soak.js` | ramp to 300 VU, 5-min spike, 150 VU for 30-min soak | **Prepared — not yet run; no guarded wrapper exists yet** |
 
 All scenarios share `k6/lib.js` (actor loading, the loopback target
 check, the standard member iteration) and cover **member-session
@@ -145,25 +151,43 @@ whole-system evidence. The prepared scenarios carry the audit's
 targets as their thresholds (reads p95 < 500 ms, writes p95 <
 800 ms, errors < 0.5% at baseline/peak, < 2% at spike).
 
-Only the smoke scenario is wired into a guarded wrapper. Running a
-prepared scenario directly requires the same discipline by hand —
-seeded database, app running against it, loopback target — and
-should happen only after the preceding stage has passed and the
-script has been reviewed:
+Baseline and peak are **wrapper-only**: never invoke their k6
+scripts directly. Each wrapper applies the full safety chain from
+the Safety model section (disposable-database guard plus explicit
+confirmation, loopback app URL, actors/database match, health and
+seeded-session binding probes) before k6 starts, writes a JSON
+export to `results/` by default, forwards termination signals to
+k6, and propagates its exit code. Run them in stage order, each
+only after the preceding stage has passed:
 
 ```bash
-BASE_URL=http://localhost:3000 ACTORS_FILE=scripts/load/actors.local.json \
-  k6 run scripts/load/k6/baseline.js
+# Baseline (after smoke has passed)
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
+LOAD_TEST_CONFIRM_DATABASE=gymsaas_load_local \
+  node scripts/load/run-baseline.mjs
+
+# Peak (after baseline has passed)
+DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
+LOAD_TEST_CONFIRM_DATABASE=gymsaas_load_local \
+  node scripts/load/run-peak.mjs
 ```
+
+Both wrappers accept `--print-config` (validate the guard,
+BASE_URL, and actors checks and print the resolved configuration,
+without probing or invoking k6), `--out <path>` (override the
+export path — contained to `results/` and symlink-checked), and
+`--no-out`. Spike/soak has no guarded wrapper yet: do not run it
+until one exists or a run is separately approved.
 
 ## Instrumentation
 
 Collect evidence while a scenario runs, not just the k6 summary:
 
 - **k6** prints per-surface latency (requests carry `name` tags, and
-  thresholds are set per surface) and the HTTP failure rate. For a
-  durable record: `k6 run --out json=scripts/load/results/k6-<scenario>.json …`
-  (the `results/` directory is gitignored).
+  thresholds are set per surface) and the HTTP failure rate. The
+  guarded wrappers write a durable JSON export to
+  `scripts/load/results/k6-<scenario>.json` by default (the
+  `results/` directory is gitignored).
 - **Database snapshots** — `collect-stats.mjs` is guarded by the
   same disposable-database rules and is read-only. Take one snapshot
   before, during (every few minutes on long stages), and after:
@@ -248,11 +272,21 @@ SELECT o.name, count(DISTINCT m.id) AS members, count(a.id) AS attendance_rows
 
 ## Known limitations of this slice
 
-- Smoke is the only executed scenario: baseline, peak, and
-  spike/soak are prepared scripts that have never run, are not wired
-  into a guarded wrapper, and cover member paths only (no staff
-  surfaces — see Scenarios). No stage result yet is evidence the app
-  supports the 14-gym / 1,700-member target.
+- Executed history (2026-10-19, local hardware): smoke recorded
+  as passed;
+  the baseline (50 VU, 15 min) executed through its guarded
+  wrapper and **passed** its configured thresholds (0.00% HTTP
+  failures, every per-surface p95 target met, correctness
+  reconciliation exact); the peak (150 VU, 15 min + check-in
+  burst) executed through its guarded wrapper and **failed** its
+  read-latency thresholds (member-page p95 ≈ 2.9 s against a
+  500 ms target) while passing every error, correctness, and
+  data-reconciliation check (0.00% failures, exactly +28
+  attendance rows, all other totals unchanged). Spike/soak is
+  prepared but has never run and has no guarded wrapper. All
+  scenarios cover member paths only (no staff surfaces — see
+  Scenarios). No stage result is evidence the app supports the
+  14-gym / 1,700-member target.
 - Local results do not transfer to Railway (different CPU, memory,
   network, and database plan); a deployed Stage 0 run is a separate,
   separately authorized step.

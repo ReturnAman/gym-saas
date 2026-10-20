@@ -1,7 +1,8 @@
 // Single shared PrismaClient for the Next.js server.
 //
-// A new client per request (or per hot-reload) exhausts the database
-// connection pool, so the client is cached on globalThis in development.
+// A new client per request (or per hot-reload, or per module-graph
+// evaluation in production) exhausts the database connection pool,
+// so the client is cached on globalThis in every environment.
 // This module is server-only: never import it from client components.
 //
 // Prisma 7 connects through a driver adapter (see prisma.config.ts for the
@@ -123,6 +124,4 @@ const adapter = new PrismaPg(resolvePoolConfig(env.databaseUrl));
 export const db: PrismaClient =
   globalForPrisma.prisma ?? new PrismaClient({ adapter });
 
-if (env.nodeEnv !== "production") {
-  globalForPrisma.prisma = db;
-}
+globalForPrisma.prisma = db;

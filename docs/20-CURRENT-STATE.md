@@ -3,7 +3,7 @@
 **Project:** gym-saas
 **Version:** 0.8 (draft — pending owner approval)
 **Status:** Core feature set implemented and merged to GitHub `main`; not deployed and not ready for public launch.
-**Last Updated:** 2026-10-18
+**Last Updated:** 2026-10-21
 **Baseline:** GitHub `main` @ `49e4959091200141a0015717d813d6ead16974dd`
 **Latest CI:** run `39115484351` on `49e4959` — SUCCESS (build, db-tests, db-upgrade, e2e-auth)
 
@@ -13,6 +13,10 @@
 > HEAD (12 migrations), closing the gap §8 recorded from the
 > 2026-10-14 audit. Backups, restore testing, and deployment
 > are unchanged — Phase B verifies migration upgrades only.
+> A note added 2026-10-21 records payment reversals (§4.10):
+> implemented and committed locally as `ca43dc3`, but not yet
+> pushed — GitHub `main`, the baseline above, and the latest
+> CI run are unchanged by it.
 > Status words used below:
 > **Completed** = implemented, tested, and merged to `main`;
 > **Unverified** = code exists but the external integration has never
@@ -319,6 +323,55 @@ that gym before any member record exists:
   test proves a referenced member cannot be deleted while an
   unreferenced one can). No application flow deletes members.
 
+## 4.10 Payment reversals — implemented, committed locally, NOT yet pushed
+
+Unlike §§4.1–4.9, this subsection does **not** describe GitHub
+`main`: payment reversals exist only as local commit `ca43dc3`
+("feat: add auditable payment reversals", on top of `fc94b29`).
+They have not been pushed, have not run in CI, and are not
+deployed. The record sits here, with the other feature
+records, so the local state is not mistaken for merged work.
+
+An authorized staff user can reverse a confirmed payment, in
+part or in full, by appending a `PaymentReversal` record
+(migration `20261021120000_add_payment_reversals`; §5):
+
+- Only OWNER and ADMIN may reverse; STAFF may record payments
+  but never reverse them. The actor's role is revalidated
+  inside the transaction.
+- The original `Payment` record is never updated or deleted;
+  the ledger stays append-only, and the reversal's payment
+  link is `ON DELETE RESTRICT`.
+- Amounts are exact integer paise, and the cumulative
+  reversals against one payment can never exceed its amount —
+  enforced under a lock on the payment row, so concurrent
+  reversals cannot jointly over-reverse. A reversal and its
+  `PAYMENT_REVERSED` audit event commit in one transaction,
+  and a client idempotency token (unique per organization)
+  makes a retried submission resolve to the original reversal.
+- Every paid and outstanding figure derives net — confirmed
+  payments minus their reversals — through the one aggregation
+  (`sumConfirmedPaymentsByMembership`). A fully reversed
+  payment stays visible in the payment history, marked
+  "Fully reversed", with its Reverse action disabled.
+- Each reversal carries a required reason category (six
+  values) and an optional explanation of at most 280
+  characters, stored on the reversal record only. Members see
+  their reversals with plain-language reason labels; the
+  member-facing view excludes staff identity and the free-text
+  explanation.
+- A reversal records a ledger correction only: it does not
+  initiate or verify a bank or payment-gateway refund, it
+  does not reopen a payment claim (a claim behind a reversed
+  payment stays CONFIRMED), and it never changes membership
+  dates or expiry.
+
+Release gates are unchanged (§8): the reversal migration has
+been verified only against a disposable local database, not
+on staging, and hosting/provisioning, production Clerk, live
+2Factor verification, and a tested backup/restore all remain
+outstanding.
+
 # 5. Data
 
 Twelve migrations, all covered by CI: run `39115484351` on
@@ -349,6 +402,15 @@ caps one PENDING request per gym + phone; §4.9),
 `20261017130000_restrict_join_request_result_member_fk` (the
 `resultingMember` composite foreign key's delete action changed
 from SET NULL to RESTRICT; no data changes; §4.9).
+
+A thirteenth migration, `20261021120000_add_payment_reversals`
+(the `payment_reversals` table with composite tenant keys,
+the organization-scoped idempotency unique, and the backing
+`payments(organization_id, id)` unique index; §4.10), exists
+only in local commit `ca43dc3`: it is not yet pushed, is not
+covered by CI, and has been verified locally by
+`prisma migrate deploy` against a disposable PostgreSQL 16
+only.
 
 # 6. Testing and CI (verified evidence)
 
@@ -391,6 +453,20 @@ on GitHub. History note: commit
 `885569f` is a temporary CI diagnostic from the Playwright
 troubleshooting period; it is superseded and inert — no revert is
 required.
+
+Local-only verification for the unpushed reversal commit
+`ca43dc3` (§4.10), recorded separately from the CI-confirmed
+counts above: Vitest **766 passed / 108 skipped** (the skips
+are the database-gated suites, which run under `test:db`),
+`test:db` **147/147 passed, 0 skipped** on a disposable
+PostgreSQL 16 — including the payment-reversal suite (role
+matrix, tenant isolation, concurrency, idempotency,
+audit-rollback, and net-total cases) — and lint, typecheck,
+and the production build all passing. These results were
+recorded before a final comment-only cleanup that is part of
+the same commit; no CI run covers `ca43dc3`, and the
+CI-confirmed counts in this section remain those of the
+`49e4959` baseline on GitHub.
 
 # 7. Deployment state
 
@@ -435,10 +511,14 @@ Supported by current repository evidence unless marked otherwise:
 5. **Membership renewal — Not started.** No renewal flow exists;
    payments explicitly do not renew. A pilot gym's first plan expiry
    has no product path yet.
-6. **Payment correction / reversal — Not started.** Confirmed
-   payments are append-only with no in-app reversal or adjustment
-   record; a staff mis-entry could currently only be corrected
-   outside the application, bypassing the audit trail.
+6. **Payment correction / reversal — Implemented locally, not
+   yet released.** Append-only reversal records are implemented
+   and committed locally (`ca43dc3`; §4.10) but not pushed, so
+   on GitHub `main` a staff mis-entry can still only be
+   corrected outside the application, bypassing the audit
+   trail. Release still requires the push, a green CI run
+   (including the db-upgrade job over the new migration), and
+   migration verification on staging.
 7. **Remaining hardening (audit items M1–M3) — Not started.**
    Three list reads are unbounded (claim queues, per-membership
    payment history, today's attendance); request-scoped scope
@@ -503,6 +583,8 @@ Supported by current repository evidence unless marked otherwise:
    drill before any real data is considered.
 2. Provision the production Clerk instance and the 2Factor account;
    perform one live OTP round-trip.
-3. Implement membership renewal, then payment reversal records.
+3. Implement membership renewal. Push payment reversals
+   (committed locally; §4.10) and verify their migration on
+   staging.
 4. Write ADR 023 and ADR 024; refresh this document after the
    deployment decision lands.

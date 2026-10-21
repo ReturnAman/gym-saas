@@ -12,6 +12,7 @@ import {
   type MembershipStatus,
   type PaymentInput,
   type PaymentMethod,
+  type PaymentReversalReason,
   type PaymentStatus,
 } from "../members";
 import { getPrimaryMembership } from "./authorization";
@@ -25,7 +26,11 @@ import {
 } from "./audit";
 import { db } from "./db";
 import type { MemberSessionContext } from "./member-session";
-import { canRecordPayment, sumConfirmedPaymentsByMembership } from "./payments";
+import {
+  canRecordPayment,
+  listReversalsForMembership,
+  sumConfirmedPaymentsByMembership,
+} from "./payments";
 
 /**
  * Server-side payment claims service (04-DATABASE-DESIGN §13;
@@ -482,6 +487,53 @@ export async function getOwnMembershipSummary(
     outstandingPaise,
     paymentStatus: derivePaymentStatus(feePaise, paidPaise),
   };
+}
+
+/** The member-facing view of one reversal against their own payment. */
+export interface OwnPaymentReversalView {
+  id: string;
+  paymentId: string;
+  amountPaise: number;
+  /** Reason category; the page renders the approved member label. */
+  reason: PaymentReversalReason;
+  /** ISO timestamp of when the gym recorded the reversal. */
+  reversedAt: string;
+}
+
+/**
+ * The member's own reversals against their current membership, newest
+ * first — displayed separately from receipts and claims. Scoped
+ * exactly like getOwnMembershipSummary (the scope member's latest
+ * membership inside the scope organization), so a member can only ever
+ * see reversals of their own payments. The view deliberately carries
+ * no staff identity and no free-text explanation (a staff note).
+ */
+export async function listOwnPaymentReversals(
+  scope: MemberClaimScope,
+): Promise<OwnPaymentReversalView[]> {
+  if (!scope.userId || !scope.organizationId || !scope.memberId) {
+    throw new PaymentClaimAuthorizationError("Authentication is required.");
+  }
+  const membership = await db.membership.findFirst({
+    where: {
+      organizationId: scope.organizationId,
+      memberId: scope.memberId,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (!membership) return [];
+  const reversals = await listReversalsForMembership(
+    scope.organizationId,
+    membership.id,
+  );
+  return reversals.map((reversal) => ({
+    id: reversal.id,
+    paymentId: reversal.paymentId,
+    amountPaise: reversal.amountPaise,
+    reason: reversal.reason,
+    reversedAt: reversal.reversedAt,
+  }));
 }
 
 /** The gym's undecided claims, oldest first — the verification queue. */

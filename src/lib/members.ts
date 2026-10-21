@@ -321,8 +321,9 @@ export function derivePaymentStatus(
 /**
  * Derive a membership's paid/outstanding amounts.
  *
- * `paidPaise` is SUM(confirmed payments) against the membership, supplied by
- * the server layer from the payment records, and is always reported exactly
+ * `paidPaise` is SUM(confirmed payments) − SUM(payment reversals) against
+ * the membership, supplied net by the server layer from the ledger
+ * records, and is always reported exactly
  * — including when it exceeds the fee. Outstanding is fee − paid, floored
  * at zero: an overpayment makes outstanding ₹0 with status OVERPAID, never
  * a negative balance. These are derived values, not a persisted payment
@@ -410,6 +411,119 @@ export function validatePaymentInput(input: PaymentInput): ValidatedPaymentInput
     amountPaise,
     paymentMethod,
     reference: referenceText === "" ? null : referenceText,
+  };
+}
+
+/** Reason categories for a payment reversal (mirrors the database enum). */
+export const PAYMENT_REVERSAL_REASONS = [
+  "DUPLICATE_ENTRY",
+  "WRONG_MEMBER",
+  "WRONG_AMOUNT",
+  "PAYMENT_FAILED",
+  "REFUNDED_TO_MEMBER",
+  "OTHER",
+] as const;
+
+export type PaymentReversalReason = (typeof PAYMENT_REVERSAL_REASONS)[number];
+
+/**
+ * Member-facing labels for reversal reasons — members see these exact
+ * wordings; staff interfaces may show the raw category instead. A
+ * reversal records a ledger correction the gym has made: the
+ * REFUNDED_TO_MEMBER label reports the recorded reason and is not, by
+ * itself, proof that money moved through a bank or payment gateway.
+ */
+export const PAYMENT_REVERSAL_REASON_LABELS: Record<
+  PaymentReversalReason,
+  string
+> = {
+  DUPLICATE_ENTRY: "Duplicate entry corrected",
+  WRONG_MEMBER: "Recorded for the wrong member",
+  WRONG_AMOUNT: "Wrong amount corrected",
+  PAYMENT_FAILED: "Payment did not go through",
+  REFUNDED_TO_MEMBER: "Refunded to you",
+  OTHER: "Adjustment by the gym",
+};
+
+export const MAX_REVERSAL_EXPLANATION_LENGTH = 280;
+
+export type PaymentReversalField = "amount" | "reason" | "explanation";
+
+/** Thrown when reversal input fails validation. Carries per-field messages. */
+export class PaymentReversalValidationError extends Error {
+  errors: Partial<Record<PaymentReversalField | "form", string>>;
+
+  constructor(errors: Partial<Record<PaymentReversalField | "form", string>>) {
+    super("Payment reversal validation failed.");
+    this.name = "PaymentReversalValidationError";
+    this.errors = errors;
+  }
+}
+
+export interface PaymentReversalInput {
+  /** Decimal string, e.g. "6000" or "6000.50". Must be greater than zero. */
+  amount: string;
+  /** One of PAYMENT_REVERSAL_REASONS. */
+  reason: string;
+  /** Optional free-text explanation; empty means none. */
+  explanation: string;
+}
+
+export interface ValidatedPaymentReversalInput {
+  /** Integer paise — exact, never floating point. Always > 0. */
+  amountPaise: number;
+  reason: PaymentReversalReason;
+  explanation: string | null;
+}
+
+export function isPaymentReversalReason(
+  value: string,
+): value is PaymentReversalReason {
+  return (PAYMENT_REVERSAL_REASONS as readonly string[]).includes(value);
+}
+
+/** Full payment-reversal input validation. Server-side authoritative. */
+export function validatePaymentReversalInput(
+  input: PaymentReversalInput,
+): ValidatedPaymentReversalInput {
+  const errors: Partial<Record<PaymentReversalField, string>> = {};
+
+  let amountPaise = 0;
+  const amount = input.amount.trim();
+  if (!FEE_REGEX.test(amount)) {
+    errors.amount =
+      "Amount must be a valid amount, for example 6000 or 6000.50.";
+  } else {
+    const [rupeesPart, paisePart = ""] = amount.split(".");
+    amountPaise =
+      Number(rupeesPart) * 100 + Number(paisePart.padEnd(2, "0") || "0");
+    if (!Number.isSafeInteger(amountPaise) || amountPaise > MAX_FEE_PAISE) {
+      errors.amount = "Amount is too large.";
+    } else if (amountPaise <= 0) {
+      errors.amount = "Amount must be greater than zero.";
+    }
+  }
+
+  let reason: PaymentReversalReason | null = null;
+  if (isPaymentReversalReason(input.reason.trim())) {
+    reason = input.reason.trim() as PaymentReversalReason;
+  } else {
+    errors.reason = "Choose a reason for the reversal.";
+  }
+
+  const explanationText = input.explanation.trim();
+  if (explanationText.length > MAX_REVERSAL_EXPLANATION_LENGTH) {
+    errors.explanation = `Explanation must be at most ${MAX_REVERSAL_EXPLANATION_LENGTH} characters.`;
+  }
+
+  if (Object.keys(errors).length > 0 || !reason) {
+    throw new PaymentReversalValidationError(errors);
+  }
+
+  return {
+    amountPaise,
+    reason,
+    explanation: explanationText === "" ? null : explanationText,
   };
 }
 

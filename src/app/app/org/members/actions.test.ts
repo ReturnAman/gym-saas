@@ -16,11 +16,13 @@ const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 const {
   mockRequireCurrentUser,
   mockRecordPayment,
+  mockReversePayment,
   mockRevalidatePath,
   mockRedirect,
 } = vi.hoisted(() => ({
   mockRequireCurrentUser: vi.fn(),
   mockRecordPayment: vi.fn(),
+  mockReversePayment: vi.fn(),
   mockRevalidatePath: vi.fn(),
   mockRedirect: vi.fn(),
 }));
@@ -48,19 +50,35 @@ vi.mock("@/lib/server/payments", () => {
   class PaymentAuthorizationError extends Error {}
   class PaymentNotFoundError extends Error {}
   class PaymentIdempotencyConflictError extends Error {}
+  class PaymentReversalExceedsError extends Error {
+    remainingPaise: number;
+    constructor(remainingPaise: number) {
+      super("exceeds");
+      this.remainingPaise = remainingPaise;
+    }
+  }
   return {
     PaymentAuthorizationError,
     PaymentIdempotencyConflictError,
     PaymentNotFoundError,
+    PaymentReversalExceedsError,
     recordPayment: mockRecordPayment,
+    reversePayment: mockReversePayment,
   };
 });
 
-import { recordPaymentAction } from "@/app/app/org/members/actions";
-import { PaymentValidationError } from "@/lib/members";
+import {
+  recordPaymentAction,
+  reversePaymentAction,
+} from "@/app/app/org/members/actions";
+import {
+  PaymentReversalValidationError,
+  PaymentValidationError,
+} from "@/lib/members";
 import {
   PaymentAuthorizationError,
   PaymentIdempotencyConflictError,
+  PaymentReversalExceedsError,
 } from "@/lib/server/payments";
 
 const INITIAL = { ok: false, message: null, errors: {} };
@@ -86,6 +104,7 @@ beforeEach(() => {
   errorSpy.mockClear();
   mockRequireCurrentUser.mockResolvedValue({ id: "owner-1" });
   mockRecordPayment.mockResolvedValue({ paymentId: "pay-1" });
+  mockReversePayment.mockResolvedValue({ reversalId: "rev-1" });
 });
 
 describe("recordPaymentAction", () => {
@@ -213,5 +232,114 @@ describe("recordPaymentAction", () => {
     );
     await recordPaymentAction(INITIAL, paymentForm());
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+const REVERSAL_INITIAL = { ok: false, message: null, errors: {} };
+
+function reversalForm(withToken = false) {
+  const form = new FormData();
+  form.set("memberId", "member-1");
+  form.set("paymentId", "pay-1");
+  form.set("amount", "300");
+  form.set("reason", "WRONG_AMOUNT");
+  form.set("explanation", "");
+  if (withToken) form.set("idempotencyToken", "tok-reversal-0001-abcd");
+  return form;
+}
+
+describe("reversePaymentAction", () => {
+  it("on success: calls the service with the form fields, revalidates and redirects", async () => {
+    mockRedirect.mockImplementation(() => {
+      throw new Error("NEXT_REDIRECT");
+    });
+    await expect(
+      reversePaymentAction(REVERSAL_INITIAL, reversalForm()),
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockReversePayment).toHaveBeenCalledWith(
+      "owner-1",
+      "pay-1",
+      { amount: "300", reason: "WRONG_AMOUNT", explanation: "" },
+      undefined,
+    );
+    expect(mockRevalidatePath).toHaveBeenCalledWith(
+      "/app/org/members/member-1",
+    );
+  });
+
+  it("forwards the form's idempotency token to the service", async () => {
+    mockRedirect.mockImplementation(() => {
+      throw new Error("NEXT_REDIRECT");
+    });
+    await expect(
+      reversePaymentAction(REVERSAL_INITIAL, reversalForm(true)),
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockReversePayment).toHaveBeenCalledWith(
+      "owner-1",
+      "pay-1",
+      { amount: "300", reason: "WRONG_AMOUNT", explanation: "" },
+      { idempotencyKey: "tok-reversal-0001-abcd" },
+    );
+  });
+
+  it("maps validation failures to per-field errors", async () => {
+    mockReversePayment.mockRejectedValue(
+      new PaymentReversalValidationError({
+        reason: "Choose a reason for the reversal.",
+      }),
+    );
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.ok).toBe(false);
+    expect(state.errors.reason).toBe("Choose a reason for the reversal.");
+  });
+
+  it("maps an over-reversal to the amount field, naming what remains", async () => {
+    mockReversePayment.mockRejectedValue(new PaymentReversalExceedsError(20_000));
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.errors.amount).toBe(
+      "Only ₹200 of this payment can still be reversed.",
+    );
+  });
+
+  it("maps a fully reversed payment to a clear amount error", async () => {
+    mockReversePayment.mockRejectedValue(new PaymentReversalExceedsError(0));
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.errors.amount).toBe(
+      "This payment has already been fully reversed.",
+    );
+  });
+
+  it("maps an idempotency conflict to the check-history message", async () => {
+    mockReversePayment.mockRejectedValue(new PaymentIdempotencyConflictError());
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.message).toContain("already used with different details");
+  });
+
+  it("passes authorization failures through as the form message", async () => {
+    mockReversePayment.mockRejectedValue(
+      new PaymentAuthorizationError(
+        "You do not have permission to reverse payments.",
+      ),
+    );
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.message).toBe(
+      "You do not have permission to reverse payments.",
+    );
+  });
+
+  it("connection loss: check-first message, never a blind retry invitation", async () => {
+    mockReversePayment.mockRejectedValue(dbError("P1001"));
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.ok).toBe(false);
+    expect(state.message).toContain(
+      "couldn't confirm whether this reversal was recorded",
+    );
+    expect(state.message).not.toContain("P1001");
+  });
+
+  it("pool timeout: states plainly that nothing was recorded", async () => {
+    mockReversePayment.mockRejectedValue(dbError("P2024"));
+    const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
+    expect(state.message).toContain("this reversal was not recorded");
   });
 });

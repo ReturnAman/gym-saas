@@ -4,6 +4,7 @@ import { formatKolkataDateTime } from "@/lib/attendance";
 import {
   MEMBERSHIP_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
+  PAYMENT_REVERSAL_REASON_LABELS,
   PAYMENT_STATUS_LABELS,
   PLAN_LABELS,
   formatDate,
@@ -13,6 +14,7 @@ import { requireMemberContext } from "@/lib/server/member-session";
 import {
   getOwnMembershipSummary,
   listOwnPaymentClaims,
+  listOwnPaymentReversals,
   memberClaimScope,
   type PaymentClaimView,
 } from "@/lib/server/payment-claims";
@@ -64,9 +66,10 @@ export default async function MemberPaymentsPage() {
   }
 
   const scope = memberClaimScope(context);
-  const [summary, claims] = await Promise.all([
+  const [summary, claims, reversals] = await Promise.all([
     getOwnMembershipSummary(scope),
     listOwnPaymentClaims(scope),
+    listOwnPaymentReversals(scope),
   ]);
 
   return (
@@ -140,6 +143,29 @@ export default async function MemberPaymentsPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {reversals.length > 0 && (
+        <>
+          <h2>Reversals by the gym</h2>
+          <p>
+            The gym corrected these payments. The amounts are already
+            reflected in your Paid so far total above.
+          </p>
+          <ul>
+            {reversals.map((reversal) => (
+              <li key={reversal.id}>
+                <p>
+                  {PAYMENT_REVERSAL_REASON_LABELS[reversal.reason]} —{" "}
+                  {formatInr(reversal.amountPaise)}
+                </p>
+                <p>
+                  Reversed {formatKolkataDateTime(reversal.reversedAt)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       <p>

@@ -108,6 +108,9 @@ model User {
   // Payment claims this user verified (confirmed or rejected) as staff.
   verifiedPaymentClaims PaymentClaim[] @relation("VerifiedPaymentClaims")
 
+  // Payment reversals this user created (OWNER/ADMIN only).
+  reversedPayments PaymentReversal[] @relation("ReversedPayments")
+
   // Attendance sessions this user checked in (staff manual check-in in
   // V1; the member themselves once QR self-check-in arrives).
   attendanceCheckIns AttendanceSession[] @relation("AttendanceCheckedInBy")
@@ -158,6 +161,7 @@ model Organization {
   memberOtpChallenges MemberOtpChallenge[]
   memberSessions    MemberSession[]
   memberJoinRequests MemberJoinRequest[]
+  paymentReversals    PaymentReversal[]
 
   @@map("organizations")
 }
@@ -218,6 +222,7 @@ model Member {
   memberships  Membership[]
   payments     Payment[]
   paymentClaims PaymentClaim[]
+  paymentReversals PaymentReversal[]
   attendanceSessions AttendanceSession[]
   // The member record a join request produced, when staff approval (a
   // later slice) creates one from the request.
@@ -271,6 +276,7 @@ model Membership {
   member       Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
   payments     Payment[]
   paymentClaims PaymentClaim[]
+  paymentReversals PaymentReversal[]
 
   @@unique([organizationId, id])
   @@index([organizationId])
@@ -290,8 +296,8 @@ model Membership {
 // payment that has actually been received (confirmedBy/confirmedAt).
 //
 // Confirmed payments are financial history: the application offers no edit
-// or delete path for them, and corrections will use explicit
-// reversal/adjustment records in a future slice — never silent rewrites.
+// or delete path for them, and corrections use explicit reversal records
+// (PaymentReversal below) — never silent rewrites.
 //
 // Tenant integrity mirrors Membership's: composite foreign keys
 // (organization_id, member_id) → members(organization_id, id) and
@@ -346,13 +352,94 @@ model Payment {
   membership    Membership   @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Cascade)
   confirmedByUser User       @relation("ConfirmedPayments", fields: [confirmedBy], references: [id], onDelete: Restrict)
   paymentClaim    PaymentClaim? @relation(fields: [organizationId, paymentClaimId], references: [organizationId, id], onDelete: Restrict)
+  reversals       PaymentReversal[]
 
+  // Backs the composite foreign key from payment_reversals, exactly as
+  // on Member and Membership: a reversal can only reference a payment of
+  // the same organization.
+  @@unique([organizationId, id])
   @@unique([organizationId, paymentClaimId])
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId])
   @@index([memberId])
   @@index([membershipId])
   @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Payment reversals — explicit corrections to confirmed payments.
+// ---------------------------------------------------------------------------
+// A PaymentReversal is an append-only ledger correction: it records that
+// some or all of a confirmed payment was reversed (duplicate entry, wrong
+// member, wrong amount, a payment that did not go through, money the gym
+// returned to the member, or another correction). The original Payment
+// row is never updated or deleted, and a reversal does NOT itself move
+// money or initiate a gateway/bank refund: it records a correction the
+// gym has made, so the ledger matches reality. Balances derive net:
+// SUM(payments) − SUM(reversals) per membership (see
+// sumConfirmedPaymentsByMembership in src/lib/server/payments.ts), and a
+// reversal never changes membership dates or a payment claim's state —
+// reversing a claim-confirmed payment leaves the claim CONFIRMED.
+//
+// Only OWNER and ADMIN may create reversals; STAFF may record payments
+// but may not reverse them. The cumulative invariant — reversals for one
+// payment never exceed that payment's amount — is enforced inside the
+// reversal transaction by locking the payment row (SELECT … FOR UPDATE)
+// before summing prior reversals; no cross-row CHECK can express it.
+//
+// Tenant integrity mirrors Payment's: composite foreign keys
+// (organization_id, payment_id) → payments(organization_id, id),
+// (organization_id, member_id) → members(organization_id, id), and
+// (organization_id, membership_id) → memberships(organization_id, id)
+// keep every reference inside the tenant. Member and membership are
+// copied from the locked payment row at creation, never from client
+// input. The payment foreign key is Restrict: a payment that has
+// reversals is financial history and cannot be deleted out from under
+// them.
+//
+// Idempotency mirrors Payment (H4): a client-generated token, unique
+// per organization, so a retried reversal resolves to the original
+// reversal instead of creating a second one; NULL tokens never collide.
+//
+// Append-only, like AuditLog: there is deliberately no updated_at.
+enum PaymentReversalReason {
+  DUPLICATE_ENTRY
+  WRONG_MEMBER
+  WRONG_AMOUNT
+  PAYMENT_FAILED
+  REFUNDED_TO_MEMBER
+  OTHER
+}
+
+model PaymentReversal {
+  id             String                @id @default(uuid())
+  organizationId String                @map("organization_id")
+  paymentId      String                @map("payment_id")
+  memberId       String                @map("member_id")
+  membershipId   String                @map("membership_id")
+  // Always positive; the record type carries the direction and the
+  // ledger math subtracts reversals from payments.
+  amount         Decimal               @db.Decimal(12, 2)
+  reason         PaymentReversalReason
+  // Optional staff explanation, bounded in the application layer and
+  // deliberately not copied into audit-event metadata.
+  explanation    String?
+  // The OWNER/ADMIN user who created this reversal.
+  reversedBy     String                @map("reversed_by")
+  idempotencyKey String?               @map("idempotency_key")
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payment        Payment      @relation(fields: [organizationId, paymentId], references: [organizationId, id], onDelete: Restrict)
+  member         Member       @relation(fields: [organizationId, memberId], references: [organizationId, id], onDelete: Cascade)
+  membership     Membership   @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Cascade)
+  reversedByUser User         @relation("ReversedPayments", fields: [reversedBy], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId])
+  @@index([paymentId])
+  @@index([membershipId])
+  @@map("payment_reversals")
 }
 
 // ---------------------------------------------------------------------------

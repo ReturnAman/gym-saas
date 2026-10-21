@@ -11,6 +11,7 @@ const {
   mockMembershipUpdate,
   mockPaymentGroupBy,
   mockTxQueryRaw,
+  mockPaymentReversalGroupBy,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -20,6 +21,7 @@ const {
   mockAuditLogCreate: vi.fn(),
   mockMembershipUpdate: vi.fn(),
   mockPaymentGroupBy: vi.fn(),
+  mockPaymentReversalGroupBy: vi.fn(),
   mockTxQueryRaw: vi.fn(),
 }));
 
@@ -29,6 +31,7 @@ vi.mock("@/lib/server/db", () => ({
     member: { findFirst: mockMemberFindFirst },
     membership: { findFirst: mockMembershipFindFirst },
     payment: { groupBy: mockPaymentGroupBy },
+    paymentReversal: { groupBy: mockPaymentReversalGroupBy },
     $transaction: mockTransaction,
   },
 }));
@@ -86,6 +89,8 @@ function mockMemberAndMembership() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockRoleScope("OWNER");
+  // Default: no reversals anywhere (paid totals are gross == net).
+  mockPaymentReversalGroupBy.mockResolvedValue([]);
 });
 
 describe("canRecordPayment", () => {

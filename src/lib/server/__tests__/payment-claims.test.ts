@@ -15,6 +15,7 @@ const {
   mockTxPaymentCreate,
   mockAuditLogCreate,
   mockPaymentGroupBy,
+  mockPaymentReversalGroupBy,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -29,6 +30,7 @@ const {
   mockTxPaymentCreate: vi.fn(),
   mockAuditLogCreate: vi.fn(),
   mockPaymentGroupBy: vi.fn(),
+  mockPaymentReversalGroupBy: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -41,6 +43,7 @@ vi.mock("@/lib/server/db", () => ({
       findMany: mockClaimFindMany,
     },
     payment: { groupBy: mockPaymentGroupBy },
+    paymentReversal: { groupBy: mockPaymentReversalGroupBy },
     $transaction: mockTransaction,
   },
 }));
@@ -125,6 +128,7 @@ beforeEach(() => {
   mockTxPaymentCreate.mockResolvedValue({ id: PAYMENT_ID });
   mockAuditLogCreate.mockResolvedValue({ id: "audit-id" });
   mockPaymentGroupBy.mockResolvedValue([]);
+  mockPaymentReversalGroupBy.mockResolvedValue([]);
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
       $queryRaw: mockTxQueryRaw,

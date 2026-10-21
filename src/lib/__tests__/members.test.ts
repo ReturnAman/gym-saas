@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_REVERSAL_EXPLANATION_LENGTH,
   MEMBERSHIP_EXPIRING_WITHIN_DAYS,
+  PAYMENT_REVERSAL_REASONS,
+  PAYMENT_REVERSAL_REASON_LABELS,
   PLAN_DURATIONS_MONTHS,
   MemberValidationError,
+  PaymentReversalValidationError,
   PaymentValidationError,
   addCalendarMonths,
   calculateExpiryDate,
@@ -11,11 +15,13 @@ import {
   deriveMembershipStatus,
   derivePaymentStatus,
   formatInr,
+  isPaymentReversalReason,
   parseDateInput,
   validateFee,
   validateMemberInput,
   validateName,
   validatePaymentInput,
+  validatePaymentReversalInput,
   validatePhoneNumber,
 } from "@/lib/members";
 
@@ -366,5 +372,142 @@ describe("formatInr", () => {
     expect(formatInr(600_050)).toBe("₹6,000.50");
     expect(formatInr(0)).toBe("₹0");
     expect(formatInr(100)).toBe("₹1");
+  });
+});
+
+describe("payment reversal reasons and labels", () => {
+  it("exposes exactly the six approved categories", () => {
+    expect(PAYMENT_REVERSAL_REASONS).toEqual([
+      "DUPLICATE_ENTRY",
+      "WRONG_MEMBER",
+      "WRONG_AMOUNT",
+      "PAYMENT_FAILED",
+      "REFUNDED_TO_MEMBER",
+      "OTHER",
+    ]);
+  });
+
+  it("labels every category with its approved member-facing wording", () => {
+    expect(PAYMENT_REVERSAL_REASON_LABELS).toEqual({
+      DUPLICATE_ENTRY: "Duplicate entry corrected",
+      WRONG_MEMBER: "Recorded for the wrong member",
+      WRONG_AMOUNT: "Wrong amount corrected",
+      PAYMENT_FAILED: "Payment did not go through",
+      REFUNDED_TO_MEMBER: "Refunded to you",
+      OTHER: "Adjustment by the gym",
+    });
+  });
+
+  it("recognizes only the six categories", () => {
+    for (const reason of PAYMENT_REVERSAL_REASONS) {
+      expect(isPaymentReversalReason(reason)).toBe(true);
+    }
+    expect(isPaymentReversalReason("REFUND")).toBe(false);
+    expect(isPaymentReversalReason("")).toBe(false);
+    expect(isPaymentReversalReason("duplicate_entry")).toBe(false);
+  });
+});
+
+describe("validatePaymentReversalInput", () => {
+  it("parses a full reversal into exact paise, trimming the explanation", () => {
+    expect(
+      validatePaymentReversalInput({
+        amount: "2500.50",
+        reason: "WRONG_AMOUNT",
+        explanation: "  Recorded ₹2,500.50 instead of ₹250.  ",
+      }),
+    ).toEqual({
+      amountPaise: 250_050,
+      reason: "WRONG_AMOUNT",
+      explanation: "Recorded ₹2,500.50 instead of ₹250.",
+    });
+  });
+
+  it("treats a blank explanation as none", () => {
+    expect(
+      validatePaymentReversalInput({
+        amount: "100",
+        reason: "OTHER",
+        explanation: "   ",
+      }).explanation,
+    ).toBeNull();
+  });
+
+  it("rejects a zero or negative amount on the amount field", () => {
+    for (const amount of ["0", "0.00", "-5"]) {
+      try {
+        validatePaymentReversalInput({
+          amount,
+          reason: "OTHER",
+          explanation: "",
+        });
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(PaymentReversalValidationError);
+        expect(
+          (error as PaymentReversalValidationError).errors.amount,
+        ).toBeTruthy();
+      }
+    }
+  });
+
+  it("rejects a malformed amount on the amount field", () => {
+    try {
+      validatePaymentReversalInput({
+        amount: "sixty",
+        reason: "OTHER",
+        explanation: "",
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(PaymentReversalValidationError);
+      expect(
+        (error as PaymentReversalValidationError).errors.amount,
+      ).toBeTruthy();
+    }
+  });
+
+  it("rejects a missing or unknown reason on the reason field", () => {
+    for (const reason of ["", "REFUND", "duplicate_entry"]) {
+      try {
+        validatePaymentReversalInput({
+          amount: "100",
+          reason,
+          explanation: "",
+        });
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(PaymentReversalValidationError);
+        expect(
+          (error as PaymentReversalValidationError).errors.reason,
+        ).toBeTruthy();
+      }
+    }
+  });
+
+  it("accepts an explanation at the bound and rejects one past it", () => {
+    const atBound = "x".repeat(MAX_REVERSAL_EXPLANATION_LENGTH);
+    expect(MAX_REVERSAL_EXPLANATION_LENGTH).toBe(280);
+    expect(
+      validatePaymentReversalInput({
+        amount: "100",
+        reason: "OTHER",
+        explanation: atBound,
+      }).explanation,
+    ).toBe(atBound);
+
+    try {
+      validatePaymentReversalInput({
+        amount: "100",
+        reason: "OTHER",
+        explanation: `${atBound}x`,
+      });
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toBeInstanceOf(PaymentReversalValidationError);
+      expect(
+        (error as PaymentReversalValidationError).errors.explanation,
+      ).toContain("280");
+    }
   });
 });

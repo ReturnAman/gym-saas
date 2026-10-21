@@ -13,6 +13,8 @@ const {
   mockMembershipCreate,
   mockPaymentGroupBy,
   mockPaymentFindMany,
+  mockPaymentReversalGroupBy,
+  mockPaymentReversalFindMany,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -25,6 +27,8 @@ const {
   mockMembershipCreate: vi.fn(),
   mockPaymentGroupBy: vi.fn(),
   mockPaymentFindMany: vi.fn(),
+  mockPaymentReversalGroupBy: vi.fn(),
+  mockPaymentReversalFindMany: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -41,6 +45,10 @@ vi.mock("@/lib/server/db", () => ({
       count: mockMemberCount,
     },
     payment: { groupBy: mockPaymentGroupBy, findMany: mockPaymentFindMany },
+    paymentReversal: {
+      groupBy: mockPaymentReversalGroupBy,
+      findMany: mockPaymentReversalFindMany,
+    },
     $transaction: mockTransaction,
   },
 }));
@@ -113,19 +121,32 @@ beforeEach(() => {
   // Default: no confirmed payments anywhere (sums derive paid = ₹0).
   mockPaymentGroupBy.mockResolvedValue([]);
   mockPaymentFindMany.mockResolvedValue([]);
+  mockPaymentReversalGroupBy.mockResolvedValue([]);
+  mockPaymentReversalFindMany.mockResolvedValue([]);
   mockOrgMembershipFindMany.mockResolvedValue([]);
 });
 
 describe("getMemberPermissions", () => {
-  it("lets OWNER, ADMIN and STAFF manage members", () => {
-    for (const role of ["OWNER", "ADMIN", "STAFF"] as const) {
+  it("lets OWNER and ADMIN manage members and reverse payments", () => {
+    for (const role of ["OWNER", "ADMIN"] as const) {
       expect(getMemberPermissions(role)).toEqual({
         canView: true,
         canCreate: true,
         canEdit: true,
         canRecordPayment: true,
+        canReversePayment: true,
       });
     }
+  });
+
+  it("lets STAFF manage members and record payments, but not reverse them", () => {
+    expect(getMemberPermissions("STAFF")).toEqual({
+      canView: true,
+      canCreate: true,
+      canEdit: true,
+      canRecordPayment: true,
+      canReversePayment: false,
+    });
   });
 
   it("lets TRAINER view but not mutate", () => {
@@ -134,6 +155,7 @@ describe("getMemberPermissions", () => {
       canCreate: false,
       canEdit: false,
       canRecordPayment: false,
+      canReversePayment: false,
     });
   });
 
@@ -143,6 +165,7 @@ describe("getMemberPermissions", () => {
       canCreate: false,
       canEdit: false,
       canRecordPayment: false,
+      canReversePayment: false,
     });
   });
 });
@@ -428,8 +451,11 @@ describe("payments derivation (list & detail)", () => {
         reference: "UTR123",
         confirmedAt: new Date(Date.UTC(2026, 8, 15, 10, 30)).toISOString(),
         confirmedByRole: "OWNER",
+        reversedPaise: 0,
+        remainingReversiblePaise: 250_000,
       },
     ]);
+    expect(detail?.membership?.reversals).toEqual([]);
     // History lookups are tenant-scoped too.
     expect(mockPaymentFindMany.mock.calls[0]?.[0].where).toEqual({
       organizationId: ORG_ID,

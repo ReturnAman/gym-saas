@@ -204,6 +204,11 @@ export default async function MemberDetailPage({
                   </dd>
                 </div>
               </dl>
+              {membership.reversals.length > 0 && (
+                <p className={styles.hint}>
+                  Paid is net of reversals — see Reversals below.
+                </p>
+              )}
 
               <h3>Payment history</h3>
               {membership.payments.length === 0 ? (
@@ -214,16 +219,35 @@ export default async function MemberDetailPage({
                     <thead>
                       <tr>
                         <th scope="col">Amount</th>
+                        <th scope="col">Reversed</th>
                         <th scope="col">Method</th>
                         <th scope="col">Reference</th>
                         <th scope="col">Date</th>
                         <th scope="col">Confirmed by</th>
+                        {detail.permissions.canReversePayment && (
+                          <th scope="col">Action</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {membership.payments.map((payment) => (
                         <tr key={payment.id}>
                           <td>{formatInr(payment.amountPaise)}</td>
+                          <td>
+                            {payment.reversedPaise > 0
+                              ? formatInr(payment.reversedPaise)
+                              : "—"}
+                            {payment.remainingReversiblePaise <= 0 && (
+                              <>
+                                {" "}
+                                <span
+                                  className={`${styles.badge} ${styles.badgeExpired}`}
+                                >
+                                  Fully reversed
+                                </span>
+                              </>
+                            )}
+                          </td>
                           <td>{PAYMENT_METHOD_LABELS[payment.paymentMethod]}</td>
                           <td>
                             {payment.reference ?? (
@@ -232,6 +256,60 @@ export default async function MemberDetailPage({
                           </td>
                           <td>{formatDate(new Date(payment.confirmedAt))}</td>
                           <td>{payment.confirmedByRole ?? "—"}</td>
+                          {detail.permissions.canReversePayment && (
+                            <td>
+                              {payment.remainingReversiblePaise > 0 ? (
+                                <Link
+                                  href={`/app/org/members/${detail.id}/payments/${payment.id}/reverse`}
+                                >
+                                  Reverse
+                                </Link>
+                              ) : (
+                                <>
+                                  <button type="button" disabled>
+                                    Reverse
+                                  </button>{" "}
+                                  <span className={styles.hint}>
+                                    Fully reversed — nothing left to reverse.
+                                  </span>
+                                </>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <h3>Reversals</h3>
+              {membership.reversals.length === 0 ? (
+                <p className={styles.empty}>No reversals recorded.</p>
+              ) : (
+                <div className={styles.tableWrap}>
+                  <table className={styles.table}>
+                    <thead>
+                      <tr>
+                        <th scope="col">Amount reversed</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Explanation</th>
+                        <th scope="col">Date</th>
+                        <th scope="col">Reversed by</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {membership.reversals.map((reversal) => (
+                        <tr key={reversal.id}>
+                          <td>{formatInr(reversal.amountPaise)}</td>
+                          <td>{reversal.reason}</td>
+                          <td>
+                            {reversal.explanation ?? (
+                              <span className={styles.empty}>—</span>
+                            )}
+                          </td>
+                          <td>{formatDate(new Date(reversal.reversedAt))}</td>
+                          <td>{reversal.reversedByRole ?? "—"}</td>
                         </tr>
                       ))}
                     </tbody>

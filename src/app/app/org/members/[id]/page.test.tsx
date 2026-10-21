@@ -102,12 +102,14 @@ const DETAIL: MemberDetail = {
     membershipStatus: "ACTIVE",
     paymentStatus: "PARTIALLY_PAID",
     payments: [],
+    reversals: [],
   },
   permissions: {
     canView: true,
     canCreate: false,
     canEdit: true,
     canRecordPayment: true,
+    canReversePayment: true,
   },
 };
 
@@ -256,6 +258,115 @@ describe("member detail — claim history section (C3-S3)", () => {
     expect(html).toContain("No payments recorded yet.");
     expect(html).toContain("Attendance");
     expect(html).toContain("Back to members");
+  });
+});
+
+const DETAIL_WITH_REVERSALS: MemberDetail = {
+  ...DETAIL,
+  membership: {
+    ...DETAIL.membership!,
+    paidPaise: 20_000,
+    outstandingPaise: 80_000,
+    payments: [
+      {
+        id: "payment-full-1",
+        amountPaise: 50_000,
+        paymentMethod: "UPI",
+        reference: "UTR-FULL",
+        confirmedAt: "2026-10-05T04:30:00.000Z",
+        confirmedByRole: "OWNER",
+        reversedPaise: 50_000,
+        remainingReversiblePaise: 0,
+      },
+      {
+        id: "payment-part-1",
+        amountPaise: 25_000,
+        paymentMethod: "CASH",
+        reference: null,
+        confirmedAt: "2026-10-06T04:30:00.000Z",
+        confirmedByRole: "ADMIN",
+        reversedPaise: 5_000,
+        remainingReversiblePaise: 20_000,
+      },
+    ],
+    reversals: [
+      {
+        id: "reversal-secret-1",
+        paymentId: "payment-full-1",
+        amountPaise: 50_000,
+        reason: "DUPLICATE_ENTRY",
+        explanation: "Recorded twice",
+        reversedAt: "2026-10-07T04:30:00.000Z",
+        reversedByRole: "OWNER",
+      },
+      {
+        id: "reversal-secret-2",
+        paymentId: "payment-part-1",
+        amountPaise: 5_000,
+        reason: "WRONG_AMOUNT",
+        explanation: null,
+        reversedAt: "2026-10-08T04:30:00.000Z",
+        reversedByRole: "ADMIN",
+      },
+    ],
+  },
+};
+
+describe("member detail — payment reversals", () => {
+  beforeEach(() => {
+    mockGetMemberDetail.mockResolvedValue(DETAIL_WITH_REVERSALS);
+  });
+
+  it("shows reversed amounts per receipt, the Fully reversed state, and a disabled action with its reason", async () => {
+    const html = normalize(await renderDetail());
+    // Gross receipts stay visible alongside their reversed totals.
+    expect(html).toContain("₹500");
+    expect(html).toContain("₹250");
+    expect(html).toContain("₹50");
+    // Fully reversed receipt: badge + disabled Reverse + explanation.
+    expect(html).toContain("Fully reversed");
+    expect(html).toContain("Fully reversed — nothing left to reverse.");
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>\s*Reverse\s*<\/button>/);
+    // Partially reversed receipt keeps a working Reverse link.
+    expect(html).toContain(
+      'href="/app/org/members/member-visible-1/payments/payment-part-1/reverse"',
+    );
+  });
+
+  it("lists reversals separately with raw reason, explanation, and actor role", async () => {
+    const html = normalize(await renderDetail());
+    expect(html).toContain("Reversals");
+    expect(html).toContain("DUPLICATE_ENTRY");
+    expect(html).toContain("WRONG_AMOUNT");
+    expect(html).toContain("Recorded twice");
+    // Paid is disclosed as net of reversals.
+    expect(html).toContain("Paid is net of reversals — see Reversals below.");
+    // Internal reversal IDs are never visible text.
+    expect(html).not.toContain("reversal-secret-1");
+    expect(html).not.toContain("reversal-secret-2");
+  });
+
+  it("hides the Reverse action column from roles that cannot reverse, while history stays readable", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL_WITH_REVERSALS,
+      permissions: {
+        ...DETAIL_WITH_REVERSALS.permissions,
+        canReversePayment: false,
+      },
+    });
+    const html = normalize(await renderDetail("STAFF"));
+    expect(html).not.toContain("/reverse\"");
+    expect(html).not.toContain("Fully reversed — nothing left to reverse.");
+    // Reversal history itself remains visible to member-detail viewers.
+    expect(html).toContain("DUPLICATE_ENTRY");
+    expect(html).toContain("Fully reversed");
+  });
+
+  it("shows the empty state when nothing has been reversed", async () => {
+    mockGetMemberDetail.mockResolvedValue(DETAIL);
+    const html = normalize(await renderDetail());
+    expect(html).not.toContain("Fully reversed");
+    expect(html).toContain("No reversals recorded.");
   });
 });
 

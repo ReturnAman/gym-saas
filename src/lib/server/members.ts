@@ -20,9 +20,12 @@ import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
 import {
   canRecordPayment,
+  canReversePayment,
   listPaymentsForMembership,
+  listReversalsForMembership,
   sumConfirmedPaymentsByMembership,
   type PaymentHistoryItem,
+  type PaymentReversalHistoryItem,
 } from "./payments";
 
 /**
@@ -90,6 +93,8 @@ export interface MemberPermissions {
   canEdit: boolean;
   /** Record a confirmed payment (Payments V1): OWNER, ADMIN, STAFF. */
   canRecordPayment: boolean;
+  /** Reverse a confirmed payment: OWNER, ADMIN only (never STAFF). */
+  canReversePayment: boolean;
 }
 
 export function getMemberPermissions(role: Role): MemberPermissions {
@@ -101,6 +106,7 @@ export function getMemberPermissions(role: Role): MemberPermissions {
     canCreate: staff,
     canEdit: staff,
     canRecordPayment: canRecordPayment(role),
+    canReversePayment: canReversePayment(role),
   };
 }
 
@@ -361,16 +367,19 @@ export interface MemberDetailMembership {
   expiryDate: string;
   feePaise: number;
   /**
-   * Domain-derived, never a persisted balance: paid is SUM(confirmed
-   * payments) against the membership and outstanding is fee − paid
-   * (04-DATABASE-DESIGN §16; see deriveMembershipPayments).
+   * Domain-derived, never a persisted balance: paid is the NET
+   * confirmed total (payments minus their reversals) against the
+   * membership and outstanding is fee − paid (04-DATABASE-DESIGN §16;
+   * see deriveMembershipPayments).
    */
   paidPaise: number;
   outstandingPaise: number;
   membershipStatus: MembershipStatus;
   paymentStatus: PaymentStatus;
-  /** Confirmed payment history, newest first. */
+  /** Confirmed payment history (gross receipts), newest first. */
   payments: PaymentHistoryItem[];
+  /** Reversal history netting against the receipts, newest first. */
+  reversals: PaymentReversalHistoryItem[];
 }
 
 export interface MemberDetail {
@@ -423,6 +432,10 @@ export async function getMemberDetail(
       scope.organizationId,
       latest.id,
     );
+    const reversals = await listReversalsForMembership(
+      scope.organizationId,
+      latest.id,
+    );
     membership = {
       id: latest.id,
       plan: latest.plan,
@@ -435,6 +448,7 @@ export async function getMemberDetail(
       membershipStatus: deriveMembershipStatus(latest.expiryDate),
       paymentStatus: derivePaymentStatus(feePaise, paidPaise),
       payments,
+      reversals,
     };
   }
 

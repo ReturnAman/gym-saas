@@ -16,7 +16,9 @@ import {
   PaymentAuthorizationError,
   PaymentIdempotencyConflictError,
   PaymentNotFoundError,
+  PaymentReversalExceedsError,
   recordPayment,
+  reversePayment,
 } from "@/lib/server/payments";
 import {
   classifyDatabaseError,
@@ -29,9 +31,12 @@ import {
 } from "@/lib/server/logger";
 import {
   MemberValidationError,
+  PaymentReversalValidationError,
   PaymentValidationError,
+  formatInr,
   type MemberField,
   type PaymentField,
+  type PaymentReversalField,
 } from "@/lib/members";
 
 export interface MemberFormState {
@@ -286,6 +291,122 @@ export async function recordPaymentAction(
     return {
       ok: false,
       message: "Could not record the payment. Please try again.",
+      errors: {},
+    };
+  }
+
+  revalidatePath("/app/org/members");
+  revalidatePath(`/app/org/members/${memberId}`);
+  redirect(`/app/org/members/${memberId}`);
+}
+
+export interface PaymentReversalFormState {
+  ok: boolean;
+  message: string | null;
+  errors: Partial<Record<PaymentReversalField | "form", string>>;
+}
+
+export const INITIAL_PAYMENT_REVERSAL_FORM_STATE: PaymentReversalFormState = {
+  ok: false,
+  message: null,
+  errors: {},
+};
+
+/**
+ * Reverse-payment submit handler.
+ *
+ * Authentication is enforced by requireCurrentUser (redirects to
+ * sign-in); OWNER/ADMIN authorization, tenant isolation, the
+ * cumulative reversal invariant, and input validation are enforced
+ * inside reversePayment, server-side. The payment and member IDs come
+ * from hidden fields but are never trusted: reversePayment re-verifies
+ * the payment against the caller's organization (the member ID is used
+ * only to return to the member's page). On success the reversal and
+ * its audit event exist (atomically), and the user returns to the
+ * member's page, so a refresh cannot replay the reversal.
+ */
+export async function reversePaymentAction(
+  _prevState: PaymentReversalFormState,
+  formData: FormData,
+): Promise<PaymentReversalFormState> {
+  const user = await requireCurrentUser();
+  const memberId = String(formData.get("memberId") ?? "");
+  const paymentId = String(formData.get("paymentId") ?? "");
+
+  try {
+    const idempotencyToken = String(formData.get("idempotencyToken") ?? "");
+    await reversePayment(
+      user.id,
+      paymentId,
+      {
+        amount: String(formData.get("amount") ?? ""),
+        reason: String(formData.get("reason") ?? ""),
+        explanation: String(formData.get("explanation") ?? ""),
+      },
+      idempotencyToken ? { idempotencyKey: idempotencyToken } : undefined,
+    );
+  } catch (error) {
+    if (error instanceof PaymentReversalValidationError) {
+      return { ok: false, message: null, errors: error.errors };
+    }
+    if (error instanceof PaymentReversalExceedsError) {
+      return {
+        ok: false,
+        message: null,
+        errors: {
+          amount:
+            error.remainingPaise > 0
+              ? `Only ${formatInr(error.remainingPaise)} of this payment can still be reversed.`
+              : "This payment has already been fully reversed.",
+        },
+      };
+    }
+    if (error instanceof PaymentIdempotencyConflictError) {
+      return {
+        ok: false,
+        message:
+          "This reversal submission was already used with different details. Refresh the page and check the payment history before reversing again.",
+        errors: {},
+      };
+    }
+    if (
+      error instanceof PaymentAuthorizationError ||
+      error instanceof PaymentNotFoundError
+    ) {
+      return { ok: false, message: error.message, errors: {} };
+    }
+    if (mayHaveCommitted(error)) {
+      logDatabaseFailure({ boundary: "action:reversePayment", error });
+      // The connection died around the write: the reversal may or may
+      // not be recorded — never invite a blind retry. Refresh the
+      // member's pages so the history the staff member is sent to
+      // check is the persisted one.
+      revalidatePath("/app/org/members");
+      revalidatePath(`/app/org/members/${memberId}`);
+      return {
+        ok: false,
+        message:
+          "We couldn't confirm whether this reversal was recorded — the database connection was interrupted. Please check the member's payment history before reversing again.",
+        errors: {},
+      };
+    }
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({ boundary: "action:reversePayment", error });
+      // Pool-acquisition or statement timeout: the transaction never
+      // started or was aborted by the database — nothing was recorded,
+      // so a plain retry is safe.
+      return {
+        ok: false,
+        message:
+          "The database didn't respond in time, so this reversal was not recorded. Please try again.",
+        errors: {},
+      };
+    }
+    logUnexpectedError({ boundary: "action:reversePayment", error });
+    // Unknown failures get a generic message — never leak internals.
+    return {
+      ok: false,
+      message: "Could not reverse the payment. Please try again.",
       errors: {},
     };
   }

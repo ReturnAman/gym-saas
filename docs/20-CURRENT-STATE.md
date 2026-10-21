@@ -14,9 +14,12 @@
 > 2026-10-14 audit. Backups, restore testing, and deployment
 > are unchanged — Phase B verifies migration upgrades only.
 > A note added 2026-10-21 records payment reversals (§4.10):
-> implemented and committed locally as `ca43dc3`, but not yet
-> pushed — GitHub `main`, the baseline above, and the latest
-> CI run are unchanged by it.
+> feature commit `ca43dc3` and documentation commit
+> `a8f5a2c` are pushed to GitHub `main`. CI run
+> `39649256109` on `a8f5a2c` completed successfully,
+> including the build, database tests, database-upgrade, and
+> authenticated e2e jobs. The baseline above describes the
+> earlier baseline-specific evidence; §6 records the new CI run.
 > Status words used below:
 > **Completed** = implemented, tested, and merged to `main`;
 > **Unverified** = code exists but the external integration has never
@@ -323,14 +326,14 @@ that gym before any member record exists:
   test proves a referenced member cannot be deleted while an
   unreferenced one can). No application flow deletes members.
 
-## 4.10 Payment reversals — implemented, committed locally, NOT yet pushed
+## 4.10 Payment reversals — merged to GitHub main, not deployed
 
-Unlike §§4.1–4.9, this subsection does **not** describe GitHub
-`main`: payment reversals exist only as local commit `ca43dc3`
-("feat: add auditable payment reversals", on top of `fc94b29`).
-They have not been pushed, have not run in CI, and are not
-deployed. The record sits here, with the other feature
-records, so the local state is not mistaken for merged work.
+Payment reversals are included in GitHub `main` in feature commit
+`ca43dc3` ("feat: add auditable payment reversals", on top of
+`fc94b29`), followed by documentation commit `a8f5a2c`.
+CI run `39649256109` on `a8f5a2c` completed successfully,
+including build, database tests, database-upgrade, and e2e-auth.
+The feature is merged and CI-verified, but it is not deployed.
 
 An authorized staff user can reverse a confirmed payment, in
 part or in full, by appending a `PaymentReversal` record
@@ -406,11 +409,12 @@ from SET NULL to RESTRICT; no data changes; §4.9).
 A thirteenth migration, `20261021120000_add_payment_reversals`
 (the `payment_reversals` table with composite tenant keys,
 the organization-scoped idempotency unique, and the backing
-`payments(organization_id, id)` unique index; §4.10), exists
-only in local commit `ca43dc3`: it is not yet pushed, is not
-covered by CI, and has been verified locally by
-`prisma migrate deploy` against a disposable PostgreSQL 16
-only.
+`payments(organization_id, id)` unique index; §4.10), is
+included in GitHub `main` via commit `ca43dc3`. CI run
+`39649256109` successfully applied all migrations to disposable
+PostgreSQL 16 for db-tests and verified the upgrade path from
+the pinned previous schema with seeded-row survival. No staging
+or production database has been migrated.
 
 # 6. Testing and CI (verified evidence)
 
@@ -454,25 +458,23 @@ on GitHub. History note: commit
 troubleshooting period; it is superseded and inert — no revert is
 required.
 
-Local-only verification for the unpushed reversal commit
-`ca43dc3` (§4.10), recorded separately from the CI-confirmed
-counts above: Vitest **766 passed / 108 skipped** (the skips
-are the database-gated suites, which run under `test:db`),
-`test:db` **147/147 passed, 0 skipped** on a disposable
-PostgreSQL 16 — including the payment-reversal suite (role
-matrix, tenant isolation, concurrency, idempotency,
-audit-rollback, and net-total cases) — and lint, typecheck,
-and the production build all passing. These results were
-recorded before a final comment-only cleanup that is part of
-the same commit; no CI run covers `ca43dc3`, and the
-CI-confirmed counts in this section remain those of the
-`49e4959` baseline on GitHub.
+Local verification was recorded before the final comment-only
+cleanup and remains historical evidence only: Vitest
+**766 passed / 108 skipped**, `test:db` **147/147 passed,
+0 skipped** on disposable PostgreSQL 16, and lint, typecheck,
+and production build passed. CI run `39649256109` on
+`a8f5a2c` independently verifies the pushed feature and
+documentation commits. Its build, db-tests, db-upgrade, and
+e2e-auth jobs all succeeded. The database-upgrade job seeded
+the pinned `a046fcb` schema and upgraded through all 13
+migrations with seeded-row survival asserted. The migration
+has not been applied to staging or production.
 
 # 7. Deployment state
 
 **Nothing is deployed anywhere, and nothing has been provisioned.**
-GitHub `main` is at `49e4959`; the full feature set described
-in §4 is merged there and CI-green (run `39115484351`).
+GitHub `main` includes payment reversals through `a8f5a2c`;
+CI run `39649256109` passed all four jobs for that commit.
 The repository is host-compatible (Procfile with release-phase
 `prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
 production dependencies — commit `1803c9b8`) but no host, database,
@@ -511,14 +513,13 @@ Supported by current repository evidence unless marked otherwise:
 5. **Membership renewal — Not started.** No renewal flow exists;
    payments explicitly do not renew. A pilot gym's first plan expiry
    has no product path yet.
-6. **Payment correction / reversal — Implemented locally, not
-   yet released.** Append-only reversal records are implemented
-   and committed locally (`ca43dc3`; §4.10) but not pushed, so
-   on GitHub `main` a staff mis-entry can still only be
-   corrected outside the application, bypassing the audit
-   trail. Release still requires the push, a green CI run
-   (including the db-upgrade job over the new migration), and
-   migration verification on staging.
+6. **Payment correction / reversal — Merged and CI-verified,
+   not yet deployed.** Append-only reversal records are merged
+   in `main` (`ca43dc3`; §4.10), and CI run `39649256109`
+   passed including the db-upgrade job over the new migration.
+   Release still requires staging environment setup, staging
+   migration verification, live OTP verification, production
+   Clerk configuration, and a tested backup/restore plan.
 7. **Remaining hardening (audit items M1–M3) — Not started.**
    Three list reads are unbounded (claim queues, per-membership
    payment history, today's attendance); request-scoped scope
@@ -583,8 +584,8 @@ Supported by current repository evidence unless marked otherwise:
    drill before any real data is considered.
 2. Provision the production Clerk instance and the 2Factor account;
    perform one live OTP round-trip.
-3. Implement membership renewal. Push payment reversals
-   (committed locally; §4.10) and verify their migration on
-   staging.
+3. Implement membership renewal. Verify the payment-reversal
+   migration on staging after the staging environment is
+   provisioned (§4.10).
 4. Write ADR 023 and ADR 024; refresh this document after the
    deployment decision lands.

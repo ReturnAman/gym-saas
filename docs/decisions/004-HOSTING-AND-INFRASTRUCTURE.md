@@ -1,7 +1,7 @@
 # ADR 004 — Hosting and Infrastructure
 
 **Project:** gym-saas
-**Status:** Proposed — awaiting owner approval
+**Status:** Accepted for Stage 0 staging only; production hosting remains open
 **Date:** 2026-10-18
 **Decision Type:** Infrastructure / Architecture / Cost
 
@@ -13,23 +13,22 @@
 > All prices and capabilities below were verified from official
 > vendor documentation on 2026-10-18 (first verified 2026-10-14/15;
 > changes since then are called out in §10). Status remains
-> Proposed: no provider is selected until the owner approves §9.
+> On 2026-10-25 the owner selected Railway for Stage 0 staging only. Production hosting remains open, and the comparison below is not a production commitment.
 
 ---
 
 # 1. Status
 
-Proposed — awaiting owner approval. Nothing in this document has been
-provisioned, purchased, or deployed.
+Accepted for Stage 0 staging only (owner choice, 2026-10-25). Production hosting remains undecided. No successful application deployment or hosted database provisioning has been verified; the earlier Railway web-service builds failed. Stage 0 must use synthetic data until backup/restore requirements are satisfied.
 
 # 2. Context and constraints
 
 gym-saas is a multi-tenant gym-management SaaS: Next.js 16 + TypeScript
-modular monolith, Prisma 7 over PostgreSQL (12 migrations, verified
+modular monolith, Prisma 7 over PostgreSQL (13 migrations, verified
 against PostgreSQL 16), Clerk for owner/staff authentication, 2Factor
 SMS OTP for members (live path not yet verified). The repository is
 already host-portable: a Procfile maps the release phase to
-`npx prisma migrate deploy`, Node is pinned to `20.x`, and the Prisma
+`npx prisma migrate deploy`, Node is pinned to `>=22.12.0 <23`, and the Prisma
 CLI ships in production dependencies.
 
 Binding constraints carried from the existing ADR 004 requirements and

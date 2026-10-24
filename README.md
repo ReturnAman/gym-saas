@@ -46,11 +46,11 @@ See `docs/17-PRODUCT-UX-SPEC.md` for the full product UX specification.
 | `.github/` | CI workflows, issue and PR templates |
 
 Key docs: [AI context](AI_CONTEXT.md) · [Agent operating manual](AGENTS.md) ·
-[Changelog](CHANGELOG.md) · [Current state](docs/20-CURRENT-STATE.md)
+[Stage 0 deployment runbook](docs/21-STAGE0-DEPLOYMENT.md) · [Changelog](CHANGELOG.md) · [Current state](docs/20-CURRENT-STATE.md)
 
 ## Quickstart
 
-Prerequisites: Node.js 20+ and a PostgreSQL database.
+Prerequisites: Node.js 22.12.x (or later within major version 22) and a PostgreSQL database.
 
 ```bash
 git clone <repo-url> gym-saas

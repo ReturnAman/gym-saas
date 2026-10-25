@@ -258,3 +258,28 @@
     border-radius: 0;
   }
 }
+
+
+/* Reference theme: quiet dark surfaces with lime as the primary action. */
+.pageHeader { margin-bottom: 18px; }
+.pageHeader h1 { color: #f5f5f5; font-size: clamp(1.9rem, 3vw, 2.7rem); font-weight: 650; letter-spacing: -.06em; }
+.hint { color: #929292; font-size: .82rem; }
+.tableWrap { border: 1px solid #292929; border-radius: 14px; background: #090909; }
+.table { font-size: .84rem; }
+.table th, .table td { padding: 14px 15px; border-bottom-color: #222; }
+.table th { color: #777; font-size: .65rem; font-weight: 750; letter-spacing: .065em; }
+.table td { color: #d0d0d0; }
+.table tbody tr:hover { background: #111; }
+.rowLink { color: #f2f2f2; font-weight: 600; text-decoration: none; }
+.rowLink:hover { color: var(--lime); }
+.badge { padding: 4px 9px; font-size: .72rem; font-weight: 650; }
+.badgeInGym { color: #83e3a7; background: #102319; border-color: #244b31; }
+.badgeCheckedOut { color: #aaa; background: #171717; border-color: #343434; }
+.button { border: 1px solid var(--lime); border-radius: 11px; background: var(--lime); color: #0a0c07; padding: 11px 16px; font-size: .82rem; font-weight: 750; }
+.button:hover:not(:disabled) { background: #c9f992; }
+.secondaryButton, .smallButton { border: 1px solid #303030; border-radius: 10px; background: #111; color: #efefef; padding: 9px 13px; font-size: .82rem; font-weight: 650; }
+.secondaryButton:hover:not(:disabled), .smallButton:hover:not(:disabled) { background: #202020; }
+.formError { border: 1px solid #592a25; background: #281311; color: #ff9087; border-radius: 10px; }
+.expiredWarning { border-color: #514122; border-radius: 13px; background: #241e10; color: #f2d16f; }
+.poster { border: 1px solid #292929; border-radius: 15px; background: #0b0b0b; }
+.checkInUrl, .empty { color: #858585; }

@@ -6,6 +6,7 @@ All notable changes to this project are documented here, following
 ## [Unreleased]
 
 ### Added
+- Stage 0 deployment readiness: a database-backed `/api/ready` probe with safe failure responses, plus a Railway staging runbook covering runtime, variables, migrations, health checks, and no-real-data gates.
 - Member Management V1 first vertical slice (uncommitted, working tree):
   `Member` + `Membership` Prisma models with migration
   `20261001020000_add_members_and_memberships` (fixed four-plan V1 enum,
@@ -89,6 +90,9 @@ All notable changes to this project are documented here, following
   (`/app/org`: displays the gym name); `/app` routes first-time users to
   onboarding and members to their organization area. Unauthenticated
   requests to `/app`, `/onboarding`, and `/app/org` redirect to `/sign-in`.
+
+### Changed
+- Standardized the declared Node runtime, package-lock metadata, CI runners, and quickstart on Node 22.12.x or later within major version 22, matching the current test/build dependency engine requirements.
 
 ### Fixed
 - CI: run `npm run prisma:generate` in the GitHub Actions workflow before

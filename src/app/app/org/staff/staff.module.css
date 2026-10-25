@@ -217,3 +217,19 @@
   gap: 0.75rem;
   justify-content: center;
 }
+
+
+.header h1 { color: #f5f5f5; font-size: clamp(1.9rem,3vw,2.7rem); font-weight: 650; letter-spacing: -.06em; }
+.header > p { color: #aaa; }
+.gymNote, .rowMeta, .stateBox p { color: #919191; }
+.section h2 { color: #f2f2f2; font-weight: 620; }
+.field input, .field select { border-color: #303030; border-radius: 10px; background: #101010; color: #f5f5f5; padding: 10px 12px; }
+.button { border: 1px solid var(--lime); border-radius: 11px; background: var(--lime); color: #0a0c07; padding: 11px 16px; font-size: .82rem; font-weight: 750; }
+.button:hover:not(:disabled) { background: #c9f992; }
+.secondaryButton { border-color: #303030; border-radius: 11px; background: #111; color: #eee; padding: 10px 15px; }
+.secondaryButton:hover:not(:disabled) { background: #202020; }
+.dangerButton { border-color: #70312b; border-radius: 11px; background: #231210; color: #ff9087; }
+.candidateBox, .row, .stateBox { border-color: #292929; border-radius: 14px; background: #0b0b0b; color: #f1f1f1; }
+.badge { border-color: #333; background: #171717; color: #bfbfbf; }
+.messageError { color: #ff9087; }
+.messageOk { color: #83e3a7; }

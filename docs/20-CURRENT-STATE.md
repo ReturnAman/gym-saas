@@ -3,9 +3,9 @@
 **Project:** gym-saas
 **Version:** 0.8 (draft — pending owner approval)
 **Status:** Core feature set implemented and merged to GitHub `main`; not deployed and not ready for public launch.
-**Last Updated:** 2026-10-21
-**Baseline:** GitHub `main` @ `49e4959091200141a0015717d813d6ead16974dd`
-**Latest CI:** run `39115484351` on `49e4959` — SUCCESS (build, db-tests, db-upgrade, e2e-auth)
+**Last Updated:** 2026-10-25
+**Baseline:** GitHub `main` @ `9515714c9c0e58b56b0feec2054838479bfa74d7` (before Stage 0 deployment-readiness changes)
+**Latest CI:** run `39650177139` on `9515714` — SUCCESS (build, db-tests, db-upgrade, e2e-auth)
 
 > This revision records the migration upgrade-path test
 > (Phase B, commit `49e4959`): CI now also upgrades a seeded
@@ -472,32 +472,42 @@ has not been applied to staging or production.
 
 # 7. Deployment state
 
-**Nothing is deployed anywhere, and nothing has been provisioned.**
-GitHub `main` includes payment reversals through `a8f5a2c`;
-CI run `39649256109` passed all four jobs for that commit.
-The repository is host-compatible (Procfile with release-phase
-`prisma migrate deploy`, Node `20.x` engine pin, Prisma CLI in
-production dependencies — commit `1803c9b8`) but no host, database,
-domain, or environment exists. **ADR 004 is still Proposed** — no
-hosting decision has been taken. A Stage 0 staging review
-recommends Render (Singapore; managed PostgreSQL with point-in-time
-recovery) at an estimated $13/month; Heroku was assessed as
-zero-cost staging via the student credit with material backup
-limits (~24-hour recovery point, no PITR at the entry tier);
-Railway is also under consideration and its plan-gating for PITR
-is not yet verified. A production-readiness audit was completed on
-2026-10-15 against `a046fcb`; its open items are reflected in §8.
-No environment should hold real pilot data until backup and
-restore requirements are satisfied and a restore has been tested.
+**Stage 0 target: Railway staging only, synthetic data.** The owner selected
+Railway for a fresh Stage 0 staging deployment; this does not settle the
+long-term production hosting decision. No successful hosted application
+deployment or hosted database migration has been verified.
+
+Two earlier Railway web-service attempts failed during the build. The service
+configuration inspected on 2026-10-25 had no application variables and no
+database service. Railway's diagnosis suggested a missing `DATABASE_URL`;
+the diagnosis was not conclusive, but this is consistent with
+`prisma.config.ts`, which reads `DATABASE_URL` while `npm run build`
+runs `prisma generate`. A real private PostgreSQL URL must therefore be
+configured before build, not just at runtime. No hosted database migration
+or real application-data operation has been performed.
+
+See [Stage 0 deployment runbook](21-STAGE0-DEPLOYMENT.md) for the intended
+Node runtime, required variables, migration command, and health/readiness
+checks. The legacy `railway.json` / `railway.toml` configuration mechanism
+is not added because Railway has deprecated it for new services; configure
+the fresh service explicitly at deployment time or adopt Railway's current
+Infrastructure as Code after a reviewed plan.
+
+Do not load real gym/member data until the backup and restore requirements in
+§8 are satisfied and a restore has been tested. The existing CI evidence
+covers disposable PostgreSQL only; it is not evidence of a hosted deployment,
+hosted backup, or restore.
 
 # 8. Known launch blockers and outstanding work
 
 Supported by current repository evidence unless marked otherwise:
 
-1. **Hosting decision and provisioning** — ADR 004 unresolved; no
-   production Clerk instance, domain, or environment variables exist
-   outside CI. Stage 0 (staging, synthetic data only) is the agreed
-   first step once a provider is chosen.
+1. **Stage 0 hosting and provisioning** — Railway is selected for a fresh
+   staging environment with synthetic data only. The new deployment must
+   wait for the deployment-readiness changes to pass CI and be reviewed.
+   Production hosting is still a separate open decision; no live Clerk
+   instance, live 2Factor round-trip, hosted database migration, or tested
+   backup/restore has been established.
 2. **2Factor live verification** — account, API key (via secure
    configuration only), DLT registration, and one live OTP
    round-trip are all outstanding; until then member sign-in is
@@ -526,10 +536,8 @@ Supported by current repository evidence unless marked otherwise:
    resolution is not memoized; there is no rate limiting outside
    the OTP path. Failure logging does not yet cover the member
    create/update, attendance, settings, or onboarding actions.
-8. **Readiness probe — Not started.** `/api/health` is a liveness
-   check only and does not test database reachability.
-9. **PWA basics — Not started.** No `public/` directory, manifest,
-    or icons exist.
+8. **Readiness probe — added on the deployment-readiness branch.** `/api/health` remains a shallow liveness check; `/api/ready` executes a small database query and returns `503` without leaking details when the database is unavailable.
+9. **PWA role-aware entry — implemented on the UI/readiness draft branch; CI pending.** The app manifest starts at `/open`; that route resolves a valid member session to `/member`, a signed-in Clerk owner/staff to the protected workspace (or onboarding), and shows a compact role chooser when signed out. This does not provide offline caching/service-worker behavior. The existing primary-gym membership policy remains; gym switching is still outstanding.
 10. **Gym switcher — Not started.** Staff and claims surfaces resolve
     the actor's primary (earliest) gym only; members can belong to
     multiple gyms but post-login gym selection is limited.
@@ -538,7 +546,9 @@ Supported by current repository evidence unless marked otherwise:
 12. **Owner dashboard** — the organization home is a link hub; no
     at-a-glance dues/expiry/attendance summary exists.
 13. **SaaS billing/trial — Not started.** No subscription or trial
-    mechanics for gyms.
+    mechanics for gyms. Keep the public 7-day trial promise out of the live CTA
+    until trial start, expiry behavior and the manual subscription path are
+    implemented and tested.
 14. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.
@@ -579,9 +589,7 @@ Supported by current repository evidence unless marked otherwise:
 
 # 10. Next steps (each requires its own approval)
 
-1. Decide hosting (resolve ADR 004) and provision a Stage 0 staging
-   environment with synthetic data only; complete a timed restore
-   drill before any real data is considered.
+1. Review/merge the Stage 0 deployment-readiness changes after CI passes, then provision a fresh Railway staging environment with synthetic data only. Configure the database and app variables before building, verify migrations and `/api/ready`, and complete a timed restore drill before any real data is considered.
 2. Provision the production Clerk instance and the 2Factor account;
    perform one live OTP round-trip.
 3. Implement membership renewal. Verify the payment-reversal

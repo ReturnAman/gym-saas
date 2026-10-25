@@ -1,0 +1,128 @@
+.shell {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  background: #050505;
+  color: #f5f5f5;
+}
+.sidebar {
+  position: relative;
+  z-index: 7;
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto minmax(110px, 1fr);
+  width: 100%;
+  height: auto;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 22px;
+  padding: 25px clamp(20px, 5.5vw, 100px) 14px;
+  overflow: visible;
+  background: #050505;
+  color: #f5f5f5;
+}
+.brand { display: flex; justify-self: start; align-items: center; flex: 0 0 auto; gap: 12px; padding: 0; color: #fff; text-decoration: none; }
+.brandMark { display: grid; width: 43px; height: 43px; flex: 0 0 43px; place-items: center; border-radius: 12px; background: #151a10; color: #b8f175; font-size: 1.2rem; font-weight: 900; letter-spacing: -.06em; }
+.brandText { display: grid; line-height: 1.1; }
+.brandText strong { font-size: 1.25rem; font-weight: 690; letter-spacing: -.06em; }
+.brandText small { margin-top: 5px; color: #8c8c8c; font-size: .56rem; font-weight: 750; letter-spacing: .13em; }
+.workspaceCard, .navLabel, .sidebarBottom { display: none; }
+.sidebarNav {
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid #252525;
+  border-radius: 999px;
+  background: #1d1d1d;
+}
+.navLink {
+  position: relative;
+  display: inline-flex;
+  min-height: 43px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 15px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: #a4a4a4;
+  font-size: .78rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 150ms ease, background 150ms ease;
+}
+.navLink:hover { color: #fff; background: #2b2b2b; }
+.navLink svg { flex: 0 0 auto; width: 16px; height: 16px; color: currentColor; }
+.navActive { border-color: transparent; background: #f5f5f5; color: #151515; }
+.navActive:hover { color: #111; background: #fff; }
+.navActive svg { color: #161616; }
+.activeMarker { display: none; }
+
+.mainColumn { position: static; display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.topbar {
+  position: absolute;
+  z-index: 8;
+  top: 29px;
+  right: clamp(20px, 5.5vw, 100px);
+  display: flex;
+  min-height: 43px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.breadcrumbs, .topbarDate, .topbarDivider, .accountLabel { display: none; }
+.topbarRight { display: flex; align-items: center; gap: 12px; }
+.mobileUser { display: inline-flex; align-items: center; }
+.mobileUser :global(.cl-userButtonBox) { width: 38px; height: 38px; }
+.mobileUser :global(.cl-avatarBox) { width: 38px; height: 38px; border: 2px solid #292929; }
+.pageArea { width: 100%; max-width: 1740px; flex: 1; margin: 0 auto; padding: 28px clamp(20px, 5.5vw, 100px) 35px; }
+.mainFooter { display: flex; justify-content: space-between; gap: 12px; padding: 18px clamp(20px, 5.5vw, 100px) 25px; border-top: 1px solid #1b1b1b; color: #666; font-size: .55rem; font-weight: 750; letter-spacing: .09em; }
+.mainFooter span:last-child { color: #6d6d6d; font-size: .66rem; font-weight: 450; letter-spacing: 0; }
+.mobileNav { display: none; }
+.mobileNavLink { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 12px; border-radius: 999px; color: #a7a7a7; font-size: .73rem; font-weight: 650; text-decoration: none; white-space: nowrap; }
+.mobileNavLink svg { flex: 0 0 auto; }
+.mobileNavActive { color: #111; background: #b8f175; }
+
+@media (max-width: 1280px) {
+  .sidebar { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 14px 20px; padding-top: 20px; }
+  .sidebarNav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .sidebarNav::-webkit-scrollbar { display: none; }
+  .topbar { top: 19px; }
+  .pageArea { padding-top: 20px; }
+}
+@media (max-width: 800px) {
+  .sidebar { display: flex; flex-direction: row; justify-content: flex-start; padding: 17px 18px 12px; }
+  .sidebarNav { display: none; }
+  .topbar { top: 18px; right: 18px; }
+  .mobileNav {
+    position: fixed; z-index: 20; right: 12px; bottom: 12px; left: 12px;
+    display: flex; align-items: stretch; justify-content: flex-start; gap: 3px;
+    overflow-x: auto; padding: 7px; border: 1px solid #292929; border-radius: 17px;
+    background: rgba(18,18,18,.96); box-shadow: 0 15px 40px rgba(0,0,0,.45);
+    backdrop-filter: blur(16px); scrollbar-width: none;
+  }
+  .mobileNav::-webkit-scrollbar { display: none; }
+  .mobileNavLink { flex: 0 0 auto; flex-direction: column; min-width: 69px; gap: 4px; padding: 8px 9px; font-size: .6rem; }
+  .pageArea { padding: 23px 18px 90px; }
+  .mainFooter { padding: 12px 18px 84px; }
+}
+@media (max-width: 460px) {
+  .brandMark { width: 37px; height: 37px; flex-basis: 37px; }
+  .brandText strong { font-size: 1.1rem; }
+  .brandText small { font-size: .48rem; }
+  .topbar { top: 16px; right: 16px; }
+  .mobileUser :global(.cl-userButtonBox), .mobileUser :global(.cl-avatarBox) { width: 34px; height: 34px; }
+  .pageArea { padding: 19px 14px 90px; }
+  .mainFooter { flex-direction: column; gap: 5px; padding-right: 14px; padding-left: 14px; }
+}

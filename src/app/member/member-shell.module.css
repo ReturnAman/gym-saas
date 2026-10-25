@@ -1,0 +1,149 @@
+.shell {
+  min-height: 100vh;
+  color: #f5f5f5;
+  background: #050505;
+}
+.header {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(130px, 1fr);
+  align-items: center;
+  gap: 24px;
+  padding: 25px clamp(20px, 5.5vw, 100px) 18px;
+}
+.brand {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 12px;
+  color: #f5f5f5;
+  text-decoration: none;
+}
+.brandMark {
+  display: grid;
+  width: 43px;
+  height: 43px;
+  flex: 0 0 43px;
+  place-items: center;
+  border-radius: 12px;
+  background: #151a10;
+  color: #b8f175;
+  font-size: 1.2rem;
+}
+.brandCopy { display: grid; line-height: 1.1; }
+.brandCopy strong { font-size: 1.25rem; font-weight: 690; letter-spacing: -.06em; }
+.brandCopy strong span { font-weight: 420; }
+.brandCopy small { margin-top: 5px; color: #8c8c8c; font-size: .56rem; font-weight: 750; letter-spacing: .13em; }
+.desktopNav {
+  display: flex;
+  align-items: center;
+  justify-self: center;
+  gap: 3px;
+  max-width: 100%;
+  padding: 4px;
+  border: 1px solid #252525;
+  border-radius: 999px;
+  background: #1d1d1d;
+}
+.navLink {
+  display: inline-flex;
+  min-height: 43px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 15px;
+  border-radius: 999px;
+  color: #a4a4a4;
+  font-size: .78rem;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.navLink:hover { color: #fff; background: #2b2b2b; }
+.navActive { background: #f5f5f5; color: #151515; }
+.navActive:hover { background: #fff; color: #111; }
+.navIcon { font-size: 1rem; }
+.headerAction {
+  display: inline-flex;
+  min-height: 43px;
+  justify-self: end;
+  align-items: center;
+  gap: 9px;
+  padding: 0 16px;
+  border-radius: 11px;
+  background: #b8f175;
+  color: #10130b;
+  font-size: .79rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+.content {
+  min-height: calc(100vh - 150px);
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 32px clamp(20px, 5.5vw, 100px) 50px;
+}
+.content > main:not([class]) {
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.content > main:not([class]) > h1 {
+  margin: 0 0 18px;
+  color: #f5f5f5;
+  font-size: clamp(1.9rem, 3vw, 2.7rem);
+  font-weight: 650;
+  letter-spacing: -.06em;
+}
+.content > main:not([class]) > h2 {
+  margin-top: 30px;
+  color: #f5f5f5;
+  font-weight: 600;
+}
+.content > main:not([class]) > p { color: #aaa; }
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 19px clamp(20px, 5.5vw, 100px) 25px;
+  border-top: 1px solid #1b1b1b;
+  color: #686868;
+  font-size: .59rem;
+  font-weight: 750;
+  letter-spacing: .09em;
+}
+.footer span:last-child { color: #777; font-size: .68rem; font-weight: 450; letter-spacing: 0; }
+.mobileNav { display: none; }
+
+@media (max-width: 1050px) {
+  .header { grid-template-columns: minmax(150px, 1fr) auto; gap: 14px; }
+  .desktopNav { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; justify-content: flex-start; overflow-x: auto; }
+  .headerAction { grid-column: 2; grid-row: 1; }
+}
+@media (max-width: 680px) {
+  .header { display: flex; justify-content: flex-start; padding: 17px 18px 12px; }
+  .desktopNav, .headerAction { display: none; }
+  .content { min-height: calc(100vh - 90px); padding: 22px 18px 92px; }
+  .footer { flex-direction: column; gap: 5px; padding: 12px 18px 84px; }
+  .mobileNav {
+    position: fixed;
+    z-index: 20;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    display: flex;
+    align-items: stretch;
+    justify-content: space-around;
+    gap: 3px;
+    padding: 7px;
+    border: 1px solid #292929;
+    border-radius: 17px;
+    background: rgba(18,18,18,.96);
+    box-shadow: 0 15px 40px rgba(0,0,0,.45);
+    backdrop-filter: blur(16px);
+  }
+  .mobileLink { display: flex; flex: 1 0 auto; flex-direction: column; align-items: center; justify-content: center; gap: 3px; min-width: 62px; padding: 8px 5px; border-radius: 11px; color: #a7a7a7; font-size: .59rem; font-weight: 650; text-decoration: none; }
+  .mobileActive { background: #b8f175; color: #11140b; }
+}

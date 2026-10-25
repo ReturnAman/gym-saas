@@ -87,7 +87,7 @@ export default async function OrganizationPage() {
           <div className={styles.metricTop}><span className={styles.metricIcon + " " + styles.openIcon}>◷</span><span className={styles.metricOverline}>CURRENTLY IN GYM</span></div>
           <strong className={styles.metricValue}>{canSeeAttendance ? openCount.toLocaleString("en-IN") : "—"}</strong>
           <span className={styles.metricDescription}>{canSeeAttendance ? "Visits waiting for check-out" : "Not available for your role"}</span>
-          {canSeeAttendance && <Link href="/app/org/attendance" className={styles.metricLink}>See today's visits <span>→</span></Link>}
+          {canSeeAttendance && <Link href="/app/org/attendance" className={styles.metricLink}>See today&apos;s visits <span>→</span></Link>}
         </article>
         <article className={styles.metricCard + " " + styles.metricHighlighted}>
           <div className={styles.metricTop}><span className={styles.metricIcon + " " + styles.requestsIcon}>✳</span><span className={styles.metricOverline}>JOIN REQUESTS</span></div>
@@ -139,7 +139,7 @@ export default async function OrganizationPage() {
               ))}
             </div>
           ) : (
-            <div className={styles.emptyState}><strong>You're all set</strong><p>Your available workspace shortcuts will appear here.</p></div>
+            <div className={styles.emptyState}><strong>You&apos;re all set</strong><p>Your available workspace shortcuts will appear here.</p></div>
           )}
         </article>
       </section>

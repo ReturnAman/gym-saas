@@ -14,7 +14,7 @@ export default function SignInPage() {
         <div className={styles.intro}>
           <span className={styles.eyebrow}><i /> YOUR GYM, IN RHYTHM</span>
           <h1>Good to have<br /><em>you back.</em></h1>
-          <p>Sign in to your workspace and pick up where you left off. Your gym's everyday operations, all in one place.</p>
+          <p>Sign in to your workspace and pick up where you left off. Your gym&apos;s everyday operations, all in one place.</p>
           <div className={styles.benefitList}>
             <span><b>✓</b> Member profiles and memberships</span>
             <span><b>✓</b> Attendance and payment records</span>

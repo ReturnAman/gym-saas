@@ -73,12 +73,12 @@ export default function Home() {
           </div>
           <div className={styles.previewStats}>
             <div className={styles.previewStat}><span>Members</span><strong>—</strong><small>Member directory</small></div>
-            <div className={styles.previewStat}><span>Check-ins</span><strong>—</strong><small>Today's activity</small></div>
+            <div className={styles.previewStat}><span>Check-ins</span><strong>—</strong><small>Today&apos;s activity</small></div>
           </div>
           <div className={styles.previewList}>
             <div className={styles.previewListTitle}><strong>Everyday operations</strong><span>READY TO ORGANISE</span></div>
             <div className={styles.previewRow}><span className={styles.rowIcon}>01</span><span><strong>Members</strong><small>Profiles, plans and balances</small></span><b>↗</b></div>
-            <div className={styles.previewRow}><span className={styles.rowIcon}>02</span><span><strong>Attendance</strong><small>Today's visits and open sessions</small></span><b>↗</b></div>
+            <div className={styles.previewRow}><span className={styles.rowIcon}>02</span><span><strong>Attendance</strong><small>Today&apos;s visits and open sessions</small></span><b>↗</b></div>
             <div className={styles.previewRow}><span className={styles.rowIcon}>03</span><span><strong>Payments</strong><small>Clear, auditable payment records</small></span><b>↗</b></div>
           </div>
           <div className={styles.previewBottom}><span className={styles.bottomPulse} /> A focused workspace for your team</div>

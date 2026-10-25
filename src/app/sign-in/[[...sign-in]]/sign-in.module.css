@@ -284,3 +284,38 @@
     border-radius: 18px;
   }
 }
+
+
+/* Clerk sign-in wrapper follows the same black/lime visual language. */
+.page { background: #050505; color: #f5f5f5; }
+.header { border-bottom-color: #202020; background: #050505; }
+.brand { color: #f5f5f5; }
+.brand > span { background: #b8f175; color: #0b0d07; }
+.brand small, .backLink { color: #8b8b8b; }
+.eyebrow { color: #9d9d9d; }
+.eyebrow i { background: #b8f175; box-shadow: 0 0 0 4px rgba(184,241,117,.1); }
+.intro h1 { color: #f5f5f5; }
+.intro h1 em { color: #b8f175; }
+.intro > p { color: #a8a8a8; }
+.benefitList > span { color: #c2c2c2; }
+.benefitList b { background: #171e10; color: #b8f175; }
+.decor { border-color: #20251a; color: rgba(184,241,117,.1); }
+.decor::before { border-color: #20251a; }
+.decor::after { border-color: #292d20; }
+.authCard { border-color: #292929; border-radius: 17px; background: #0b0b0b; box-shadow: 0 25px 70px rgba(0,0,0,.3); }
+.authCardHeader > span { color: #9ba886; }
+.authCardHeader h2 { color: #f5f5f5; }
+.authCardHeader p { color: #969696; }
+.clerkMount { color: #f5f5f5; }
+.authFootnote { border-top-color: #232323; color: #858585; }
+.authFootnote span { color: #b8f175; }
+.clerkMount :global(.cl-rootBox), .clerkMount :global(.cl-card), .clerkMount :global(.cl-main), .clerkMount :global(.cl-footer) { background: transparent; color: #f5f5f5; box-shadow: none; }
+.clerkMount :global(.cl-headerTitle), .clerkMount :global(.cl-headerSubtitle), .clerkMount :global(.cl-formFieldLabel), .clerkMount :global(.cl-dividerText), .clerkMount :global(.cl-footerActionText) { color: #eee; }
+.clerkMount :global(.cl-formFieldInput) { background: #111; border-color: #333; color: #f5f5f5; }
+.clerkMount :global(.cl-formButtonPrimary) { background: #b8f175; color: #0b0d07; box-shadow: none; }
+.clerkMount :global(.cl-formButtonPrimary:hover) { background: #c9f992; }
+.clerkMount :global(.cl-footerActionLink), .clerkMount :global(.cl-identityPreviewEditButton) { color: #b8f175; }
+.clerkMount :global(.cl-dividerLine) { background: #303030; }
+@media (max-width: 850px) {
+  .authLayout { padding-top: 35px; }
+}

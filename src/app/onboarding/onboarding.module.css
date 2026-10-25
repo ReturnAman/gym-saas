@@ -386,3 +386,41 @@
     opacity: 0.24;
   }
 }
+
+
+/* Keep the existing onboarding flow; align its surfaces and controls to the reference. */
+.page { background: #050505; color: #f5f5f5; }
+.header { background: #050505; }
+.brand { color: #f5f5f5; }
+.brand > span { background: #b8f175; color: #090b06; }
+.brand small, .headerLink { color: #909090; }
+.headerLink span { color: #b8f175; }
+.content h1 { color: #f5f5f5; }
+.content h1 em { color: #b8f175; }
+.description { color: #a3a3a3; }
+.stepLabel { color: #919191; }
+.stepLabel span { border-color: #333; border-radius: 9px; background: #14170f; color: #b8f175; }
+.form label { color: #e3e3e3; }
+.form input { border-color: #303030; border-radius: 11px; background: #0f0f0f; color: #f5f5f5; }
+.form input::placeholder { color: #727272; }
+.form input:focus { border-color: #b8f175; box-shadow: 0 0 0 3px rgba(184,241,117,.12); }
+.hint { color: #888; }
+.form button { border-radius: 11px; background: #b8f175; color: #0b0d07; }
+.form button:hover { background: #c9f992; }
+.form button span { color: #151a0d; }
+.secureNote { color: #888; }
+.secureNote span { background: #17200f; color: #b8f175; }
+.sidePanel { background: #11130d; color: #f5f5f5; }
+.sidePanel::before, .sidePanel::after { border-color: rgba(184,241,117,.15); }
+.orbitOne, .orbitTwo { border-color: rgba(184,241,117,.22); }
+.orbitTwo { border-color: rgba(184,241,117,.33); }
+.glyph { color: #f0f0e8; }
+.glyph span { color: #b8f175; }
+.sideCopy > span, .sideNumber { color: #8b987d; }
+.sideCopy h2 { color: #f5f5f5; }
+.sideCopy p { color: #a4a69c; }
+.sideNumber span { color: #b8f175; }
+@media (max-width: 820px) {
+  .header { background: #050505; }
+  .sidePanel { background: #11130d; }
+}

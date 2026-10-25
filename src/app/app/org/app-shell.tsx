@@ -90,7 +90,7 @@ export function AppShell({ children, organizationName, role }: AppShellProps) {
     <div className={styles.shell}>
       <aside className={styles.sidebar}>
         <Link href="/app/org" className={styles.brand}>
-          <span className={styles.brandMark}>G</span>
+          <span className={styles.brandMark} aria-hidden="true">💪</span>
           <span className={styles.brandText}><strong>gymsaas</strong><small>GYM OPERATIONS</small></span>
         </Link>
 

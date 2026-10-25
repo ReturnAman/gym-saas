@@ -267,10 +267,10 @@ export default function Home() {
                 controls
                 playsInline
                 preload="none"
-                poster="https://images.pexels.com/photos/7031706/pexels-photo-7031706.jpeg?auto=compress&cs=tinysrgb&w=900"
-                aria-label="Video showing a gym training space"
+                poster="https://images.pexels.com/photos/4162485/pexels-photo-4162485.jpeg?auto=compress&cs=tinysrgb&w=900"
+                aria-label="Short close-up video of a weight plate in a gym"
               >
-                <source src="https://videos.pexels.com/video-files/6388410/6388410-uhd_2160_3840_25fps.mp4" type="video/mp4" />
+                <source src="https://videos.pexels.com/video-files/12994050/12994050_1080_1920_50fps.mp4" type="video/mp4" />
                 Your browser does not support embedded video.
               </video>
             </div>

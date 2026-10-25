@@ -100,7 +100,7 @@ export default async function OrganizationPage() {
       <section className={styles.middleGrid}>
         <article className={styles.panel}>
           <div className={styles.panelHeader}>
-            <div><span className={styles.sectionEyebrow}>LIVE ACTIVITY</span><h2>Today's attendance</h2><p>Member visits recorded for your gym today.</p></div>
+            <div><span className={styles.sectionEyebrow}>LIVE ACTIVITY</span><h2>Today&apos;s attendance</h2><p>Member visits recorded for your gym today.</p></div>
             {canSeeAttendance && <Link href="/app/org/attendance" className={styles.panelLink}>View all <span>→</span></Link>}
           </div>
           {!canSeeAttendance || sessions.length === 0 ? (

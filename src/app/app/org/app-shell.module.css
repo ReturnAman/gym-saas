@@ -1,0 +1,491 @@
+.shell {
+  display: flex;
+  min-height: 100vh;
+  background: #f4f7f2;
+  color: #1d2d24;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  width: 270px;
+  height: 100vh;
+  flex: 0 0 270px;
+  flex-direction: column;
+  padding: 25px 16px 15px;
+  overflow-y: auto;
+  background: #173d32;
+  color: #f8fbf5;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 10px;
+  color: #fff;
+  text-decoration: none;
+}
+
+.brandMark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border-radius: 13px;
+  background: #d6fb67;
+  color: #173d32;
+  font-size: 1.22rem;
+  font-weight: 950;
+  letter-spacing: -0.07em;
+}
+
+.brandText {
+  display: grid;
+  line-height: 1.15;
+}
+
+.brandText strong {
+  font-size: 1.23rem;
+  font-weight: 800;
+  letter-spacing: -0.06em;
+}
+
+.brandText small {
+  margin-top: 5px;
+  color: #a5c2b0;
+  font-size: 0.56rem;
+  font-weight: 850;
+  letter-spacing: 0.17em;
+}
+
+.workspaceCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 30px 0 28px;
+  padding: 12px 10px;
+  border: 1px solid rgba(214, 251, 103, 0.13);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.workspaceAvatar,
+.accountAvatar {
+  display: grid;
+  flex: 0 0 35px;
+  width: 35px;
+  height: 35px;
+  place-items: center;
+  border: 1px solid rgba(214, 251, 103, 0.25);
+  border-radius: 11px;
+  background: rgba(214, 251, 103, 0.12);
+  color: #e4ff9c;
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.workspaceCopy,
+.accountCopy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.workspaceCopy small {
+  color: #93b5a1;
+  font-size: 0.55rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+}
+
+.workspaceCopy strong,
+.accountCopy strong {
+  overflow: hidden;
+  color: #fff;
+  font-size: 0.83rem;
+  font-weight: 730;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspaceCopy > span,
+.accountCopy small {
+  color: #a4c0ae;
+  font-size: 0.66rem;
+}
+
+.workspaceChevron {
+  align-self: flex-start;
+  color: #a2bead;
+}
+
+.navLabel {
+  padding: 0 12px 10px;
+  color: #88ac98;
+  font-size: 0.59rem;
+  font-weight: 850;
+  letter-spacing: 0.16em;
+}
+
+.sidebarNav {
+  display: grid;
+  gap: 5px;
+}
+
+.navLink {
+  position: relative;
+  display: flex;
+  min-height: 45px;
+  align-items: center;
+  gap: 13px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: #c1d4c8;
+  font-size: 0.85rem;
+  font-weight: 620;
+  text-decoration: none;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+
+.navLink:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.065);
+}
+
+.navLink svg {
+  flex: 0 0 auto;
+  color: #96b8a2;
+}
+
+.navActive {
+  border-color: rgba(214, 251, 103, 0.15);
+  background: rgba(214, 251, 103, 0.12);
+  color: #edffc7;
+}
+
+.navActive svg {
+  color: #d6fb67;
+}
+
+.activeMarker {
+  position: absolute;
+  top: 10px;
+  right: -1px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 4px 0 0 4px;
+  background: #d6fb67;
+}
+
+.sidebarBottom {
+  display: grid;
+  gap: 15px;
+  margin-top: auto;
+  padding-top: 22px;
+}
+
+.sidebarNote {
+  padding: 15px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.noteGlyph {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  margin-bottom: 11px;
+  place-items: center;
+  border-radius: 8px;
+  background: #d6fb67;
+  color: #173d32;
+  font-size: 0.9rem;
+}
+
+.sidebarNote strong {
+  display: block;
+  color: #f1f8ed;
+  font-size: 0.77rem;
+}
+
+.sidebarNote p {
+  margin: 5px 0 12px;
+  color: #a6c2b1;
+  font-size: 0.68rem;
+  line-height: 1.6;
+}
+
+.sidebarNote a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #d6fb67;
+  font-size: 0.7rem;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.accountRow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 5px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.accountAvatar {
+  width: 31px;
+  height: 31px;
+  flex-basis: 31px;
+  border-radius: 10px;
+  font-size: 0.66rem;
+}
+
+.accountCopy strong {
+  max-width: 115px;
+  font-size: 0.73rem;
+}
+
+.accountRow :global(.cl-userButtonBox) {
+  margin-left: auto;
+}
+
+.mainColumn {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.topbar {
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  display: flex;
+  min-height: 73px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 clamp(22px, 3vw, 46px);
+  border-bottom: 1px solid #e5eae2;
+  background: rgba(250, 252, 248, 0.93);
+  backdrop-filter: blur(16px);
+}
+
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+
+.breadcrumbs span {
+  color: #91a093;
+  font-size: 0.59rem;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+}
+
+.breadcrumbs b {
+  color: #bdc8ba;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.breadcrumbs strong {
+  overflow: hidden;
+  color: #2d4235;
+  font-size: 0.88rem;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbarRight {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.topbarDate {
+  color: #7e8d81;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.topbarDivider {
+  height: 24px;
+  width: 1px;
+  background: #e1e7de;
+}
+
+.accountLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #64776a;
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.onlineDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #65a66d;
+}
+
+.mobileUser {
+  display: none;
+}
+
+.pageArea {
+  width: 100%;
+  max-width: 1500px;
+  flex: 1;
+  margin: 0 auto;
+  padding: clamp(24px, 3vw, 44px);
+}
+
+.mainFooter {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px clamp(24px, 3vw, 44px) 20px;
+  color: #99a49a;
+  font-size: 0.59rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.mainFooter span:last-child {
+  color: #aab3a9;
+  font-size: 0.68rem;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+
+.mobileNav {
+  display: none;
+}
+
+.mobileNavLink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: #6c7d70;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mobileNavLink svg {
+  flex: 0 0 auto;
+}
+
+.mobileNavActive {
+  color: #214b37;
+  background: #e9f4d7;
+}
+
+@media (max-width: 1080px) {
+  .sidebar {
+    width: 238px;
+    flex-basis: 238px;
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .pageArea {
+    padding: 25px;
+  }
+}
+
+@media (max-width: 800px) {
+  .sidebar {
+    display: none;
+  }
+  .topbar {
+    min-height: 65px;
+    padding: 0 20px;
+  }
+  .mobileUser {
+    display: inline-flex;
+  }
+  .accountLabel,
+  .topbarDivider {
+    display: none;
+  }
+  .pageArea {
+    padding: 25px 20px 94px;
+  }
+  .mainFooter {
+    padding: 14px 20px 85px;
+  }
+  .mobileNav {
+    position: fixed;
+    z-index: 20;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    overflow-x: auto;
+    padding: 8px;
+    border: 1px solid rgba(221, 230, 218, 0.95);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: 0 14px 36px rgba(25, 48, 35, 0.13);
+    backdrop-filter: blur(16px);
+    scrollbar-width: none;
+  }
+  .mobileNav::-webkit-scrollbar {
+    display: none;
+  }
+  .mobileNavLink {
+    flex: 0 0 auto;
+    flex-direction: column;
+    min-width: 70px;
+    gap: 4px;
+    padding: 8px 9px;
+    font-size: 0.62rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    min-height: 59px;
+    padding: 0 15px;
+  }
+  .topbarDate {
+    font-size: 0.68rem;
+  }
+  .breadcrumbs {
+    gap: 7px;
+  }
+  .breadcrumbs span {
+    font-size: 0.5rem;
+  }
+  .breadcrumbs strong {
+    font-size: 0.79rem;
+  }
+  .pageArea {
+    padding: 19px 15px 92px;
+  }
+  .mainFooter {
+    flex-direction: column;
+    padding-right: 15px;
+    padding-left: 15px;
+    gap: 5px;
+  }
+}

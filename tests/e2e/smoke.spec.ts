@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 
 test("home page loads", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { level: 1, name: /less admin/i })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: /simplify your/i })).toBeVisible();
 });
 
 test("health endpoint reports ok", async ({ request }) => {

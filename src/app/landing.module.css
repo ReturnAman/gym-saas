@@ -394,7 +394,7 @@
 }
 .mediaGrid > .mediaImageCard:nth-child(4),
 .mediaGrid > .mediaPortraitCard:nth-child(5),
-.mediaGrid > .mediaVideoCard:nth-child(6),
+.mediaGrid > .mediaImageCard:nth-child(6),
 .mediaGrid > .mediaImageCard:nth-child(7) {
   grid-column: span 3;
 }
@@ -421,7 +421,7 @@
   .mediaGrid > .mediaImageCard:nth-child(3) { grid-column: span 3; }
   .mediaGrid > .mediaImageCard:nth-child(4),
   .mediaGrid > .mediaPortraitCard:nth-child(5),
-  .mediaGrid > .mediaVideoCard:nth-child(6),
+  .mediaGrid > .mediaImageCard:nth-child(6),
   .mediaGrid > .mediaImageCard:nth-child(7) { grid-column: span 3; }
 }
 @media (max-width: 720px) {
@@ -434,7 +434,7 @@
   .mediaGrid > .mediaImageCard:nth-child(3),
   .mediaGrid > .mediaImageCard:nth-child(4),
   .mediaGrid > .mediaPortraitCard:nth-child(5),
-  .mediaGrid > .mediaVideoCard:nth-child(6),
+  .mediaGrid > .mediaImageCard:nth-child(6),
   .mediaGrid > .mediaImageCard:nth-child(7) {
     grid-column: 1;
     grid-row: auto;
@@ -452,4 +452,37 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .mediaImage { transition: none; }
+}
+
+
+/* Communicate that Gym SaaS is the platform, not a single gym business. */
+.tenantStrip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 15px 23px;
+  padding: 19px clamp(18px, 4.5vw, 82px);
+  border-top: 1px solid #1d1d1d;
+  border-bottom: 1px solid #1d1d1d;
+  background: #090909;
+  color: #b6b6b6;
+  font-size: .69rem;
+}
+.tenantStripLabel {
+  color: #b8f175;
+  font-size: .58rem;
+  font-weight: 800;
+  letter-spacing: .13em;
+}
+.tenantStrip i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #4d4d4d;
+}
+@media (max-width: 720px) {
+  .tenantStrip { justify-content: flex-start; gap: 10px 14px; padding: 18px; font-size: .63rem; }
+  .tenantStripLabel { width: 100%; }
+  .tenantStrip i { display: none; }
 }

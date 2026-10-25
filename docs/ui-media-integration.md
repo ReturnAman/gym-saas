@@ -2,14 +2,14 @@
 
 ## Placement
 
-The homepage now has an editorial media section after the feature/product previews and before the closing CTA. It uses the user-provided asset set's visual themes:
+The homepage has a supporting media section after the product previews and before the closing CTA. It explicitly frames Gym SaaS as multi-tenant management software, not the website of a single gym. It uses the user-provided asset set's visual themes:
 
 - Wide modern gym interior as the lead visual.
 - Gym-floor/cardio image as a secondary tile.
 - Training equipment, weight plates and dumbbells as supporting image tiles.
-- Two user-playable clips inside the gallery.
+- One user-playable clip inside the gallery. Other clips are not shown in the marketing gallery to avoid making the page read as a single gym's promotional site.
 
-The section is meant to give the existing black/lime design the fitness atmosphere seen in the supplied references without claiming the photos depict Gym SaaS customers, employees or facilities.
+The section describes the product model in its heading and copy: one management platform for many gyms, with each gym operating in its own workspace. The images are illustrative fitness context and are not presented as Gym SaaS customers, employees or facilities.
 
 ## Delivery and performance
 

@@ -38,7 +38,7 @@ export default function Home() {
   return (
     <main className={styles.page} id="top">
       <div className={styles.announcement}>
-        <span>Gym operations, made simpler for your everyday work.</span>
+        <span>One platform for gyms and fitness studios. Each gets its own workspace.</span>
         <a href="#features">Discover features <span aria-hidden="true">↗</span></a>
       </div>
 
@@ -52,7 +52,7 @@ export default function Home() {
             <a href="#top" className={styles.navLink}>Home</a>
             <a href="#features" className={styles.navLink}>Features</a>
             <a href="#workspace" className={styles.navLink}>Workspace</a>
-            <a href="#gym-floor" className={styles.navLink}>Gym floor</a>
+            <a href="#platform-model" className={styles.navLink}>For every gym</a>
             <a href="#how-it-works" className={styles.navLink}>How it works</a>
           </div>
           <div className={styles.navActions}>
@@ -64,10 +64,10 @@ export default function Home() {
 
       <section className={styles.hero}>
         <div className={styles.heroContent}>
-          <p className={styles.eyebrow}><span /> GYM MANAGEMENT, WITHOUT THE CLUTTER</p>
-          <h1>Simplify Your<br /><span>Gym Operations</span></h1>
+          <p className={styles.eyebrow}><span /> MULTI-TENANT GYM MANAGEMENT SOFTWARE</p>
+          <h1>One Platform.<br /><span>Every Gym.</span></h1>
           <p className={styles.heroCopy}>
-            Manage members, track attendance and review payment records from one focused gym management workspace.
+            Manage members, attendance, payment reviews and staff access through one platform—while each gym works in its own workspace.
           </p>
           <div className={styles.heroActions}>
             <Link href="/sign-in" className={styles.primaryCta}>Get Started <span aria-hidden="true">↗</span></Link>
@@ -89,7 +89,7 @@ export default function Home() {
             </div>
             <div className={styles.previewGrid}>
               <div className={styles.previewWelcome}>
-                <span className={styles.previewEyebrow}>YOUR GYM, AT A GLANCE</span>
+                <span className={styles.previewEyebrow}>YOUR GYM WORKSPACE</span>
                 <strong>Manage your<br />fitness business</strong>
                 <span className={styles.previewDate}>A clearer view of today&apos;s work.</span>
                 <span className={styles.previewButton}>＋ New Member</span>
@@ -110,14 +110,25 @@ export default function Home() {
             </div>
           </div>
         </div>
-        <p className={styles.heroCaption}><span>BUILT FOR THE DAILY ROUTINE</span><span>ONE WORKSPACE · YOUR GYM</span></p>
+        <p className={styles.heroCaption}><span>BUILT FOR GYM OPERATORS</span><span>EACH GYM · ITS OWN WORKSPACE</span></p>
+      </section>
+
+      <section className={styles.tenantStrip} aria-label="Who Gym SaaS is built for">
+        <span className={styles.tenantStripLabel}>ONE PLATFORM</span>
+        <span>Independent gyms</span>
+        <i aria-hidden="true" />
+        <span>Fitness studios</span>
+        <i aria-hidden="true" />
+        <span>Separate gym workspaces</span>
+        <i aria-hidden="true" />
+        <span>Member, attendance &amp; payment workflows</span>
       </section>
 
       <section className={styles.featuresSection} id="features">
         <div className={styles.sectionHeading}>
           <span className={styles.sectionEyebrow}>THE ESSENTIALS, MADE CLEAR</span>
           <h2>Everything important.<br /><span>Easy to find.</span></h2>
-          <p>Practical tools for the everyday routines that keep a gym running.</p>
+          <p>Core workflows for independent gyms and fitness studios, under one platform.</p>
         </div>
         <div className={styles.featureGrid}>
           {features.map((feature) => (
@@ -134,8 +145,8 @@ export default function Home() {
       <section className={styles.productSection} id="how-it-works">
         <div className={styles.sectionHeading}>
           <span className={styles.sectionEyebrow}>A FOCUSED WORKSPACE</span>
-          <h2>Run your gym<br /><span>with more clarity.</span></h2>
-          <p>Keep member details, daily attendance and payment verification connected without adding unnecessary complexity.</p>
+          <h2>The tools behind<br /><span>everyday gym operations.</span></h2>
+          <p>Each gym gets a focused workspace for its own member records, attendance and payment review—using one consistent management platform.</p>
         </div>
         <div className={styles.productGrid}>
           <article className={styles.productCard}>
@@ -175,11 +186,11 @@ export default function Home() {
       </section>
 
 
-      <section className={styles.mediaSection} id="gym-floor">
+      <section className={styles.mediaSection} id="platform-model">
         <div className={styles.mediaSectionHeader}>
-          <span className={styles.sectionEyebrow}>A LOOK INSIDE THE GYM</span>
-          <h2>Built around<br /><span>real training spaces.</span></h2>
-          <p>From the floor to the equipment, bring the day-to-day rhythm of your gym into one clear workspace.</p>
+          <span className={styles.sectionEyebrow}>BUILT FOR MANY GYMS, NOT JUST ONE</span>
+          <h2>Different gyms.<br /><span>One management platform.</span></h2>
+          <p>Gym SaaS is the software behind gym businesses—not a website for a single facility. Each gym has its own workspace for member records, attendance, payment review and staff access.</p>
         </div>
         <div className={styles.mediaGrid}>
           <article className={styles.mediaFeature}>
@@ -192,8 +203,8 @@ export default function Home() {
               className={styles.mediaImage}
             />
             <div className={styles.mediaOverlay}>
-              <span>THE SPACE YOU RUN</span>
-              <h3>Make room for the work that matters.</h3>
+              <span>ONE PLATFORM · SEPARATE WORKSPACES</span>
+              <h3>Each gym gets its own place to manage the day.</h3>
             </div>
           </article>
 
@@ -211,8 +222,8 @@ export default function Home() {
               </video>
             </div>
             <div className={styles.mediaVideoCopy}>
-              <span>STRENGTH IN MOTION</span>
-              <h3>Every detail has its place.</h3>
+              <span>MADE FOR GYM OPERATORS</span>
+              <h3>Spend less time chasing everyday details.</h3>
             </div>
           </article>
 
@@ -226,8 +237,8 @@ export default function Home() {
               className={styles.mediaImage}
             />
             <div className={styles.mediaOverlay}>
-              <span>ON THE GYM FLOOR</span>
-              <h3>Made for the everyday routine.</h3>
+              <span>MEMBER MANAGEMENT</span>
+              <h3>Keep member records organized.</h3>
             </div>
           </article>
 
@@ -241,8 +252,8 @@ export default function Home() {
               className={styles.mediaImage}
             />
             <div className={styles.mediaOverlay}>
-              <span>READY FOR THE NEXT SET</span>
-              <h3>Keep the focus on people.</h3>
+              <span>ATTENDANCE & VISITS</span>
+              <h3>Keep track of daily gym activity.</h3>
             </div>
           </article>
 
@@ -256,27 +267,23 @@ export default function Home() {
               className={styles.mediaImage}
             />
             <div className={styles.mediaOverlay}>
-              <span>STRENGTH & EQUIPMENT</span>
-              <h3>Built for movement.</h3>
+              <span>PAYMENT REVIEW</span>
+              <h3>Know what needs verification.</h3>
             </div>
           </article>
 
-          <article className={styles.mediaVideoCard}>
-            <div className={styles.mediaVideoFrame}>
-              <video
-                controls
-                playsInline
-                preload="none"
-                poster="https://images.pexels.com/photos/4162485/pexels-photo-4162485.jpeg?auto=compress&cs=tinysrgb&w=900"
-                aria-label="Short close-up video of a weight plate in a gym"
-              >
-                <source src="https://videos.pexels.com/video-files/12994050/12994050_1080_1920_50fps.mp4" type="video/mp4" />
-                Your browser does not support embedded video.
-              </video>
-            </div>
-            <div className={styles.mediaVideoCopy}>
-              <span>IN MOTION</span>
-              <h3>A space for showing up.</h3>
+          <article className={styles.mediaImageCard}>
+            <Image
+              src="https://images.pexels.com/photos/4164463/pexels-photo-4164463.jpeg?auto=compress&cs=tinysrgb&w=1000"
+              alt="Rows of dumbbells in a strength training area"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 33vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>STRENGTH TRAINING</span>
+              <h3>A consistent workspace for each gym team.</h3>
             </div>
           </article>
 
@@ -290,18 +297,18 @@ export default function Home() {
               className={styles.mediaImage}
             />
             <div className={styles.mediaOverlay}>
-              <span>TRAINING TIME</span>
-              <h3>Support the work behind every session.</h3>
+              <span>YOUR GYM, YOUR WORKSPACE</span>
+              <h3>Member data and staff access stay with the right gym.</h3>
             </div>
           </article>
         </div>
-        <p className={styles.mediaFootnote}>Videos play on demand so the page stays lightweight while you browse.</p>
+        <p className={styles.mediaFootnote}>The imagery illustrates different training environments; Gym SaaS is the management platform behind each gym.</p>
       </section>
 
       <section className={styles.ctaSection}>
         <span className={styles.ctaGlyph} aria-hidden="true">💪</span>
-        <h2>Ready to get started?</h2>
-        <p>Bring your everyday gym operations into one clear workspace.</p>
+        <h2>Ready to manage your gym with more clarity?</h2>
+        <p>Give your team one focused workspace for members, attendance and payment review.</p>
         <div className={styles.heroActions}>
           <Link href="/sign-in" className={styles.primaryCta}>Get Started <span aria-hidden="true">↗</span></Link>
           <Link href="/sign-in" className={styles.secondaryCta}>Member / Staff Login</Link>
@@ -310,8 +317,8 @@ export default function Home() {
 
       <footer className={styles.footer}>
         <Link href="/" className={styles.footerBrand}><span className={styles.brandMark}>💪</span><strong>gym<span>saas</span></strong></Link>
-        <div className={styles.footerLinks}><a href="#features">Features</a><a href="#workspace">Workspace</a><Link href="/sign-in">Login</Link><Link href="/api/health">Service health</Link></div>
-        <span className={styles.footerNote}>Clear records. Confident decisions.</span>
+        <div className={styles.footerLinks}><a href="#features">Features</a><a href="#workspace">Workspace</a><a href="#platform-model">For every gym</a><Link href="/sign-in">Login</Link><Link href="/api/health">Service health</Link></div>
+        <span className={styles.footerNote}>One platform. Separate gym workspaces.</span>
       </footer>
     </main>
   );

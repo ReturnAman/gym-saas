@@ -58,3 +58,8 @@ The screenshots do not establish that Gym SaaS has trainer discovery, workout ca
 ## Fidelity boundary
 
 A true 100% pixel match cannot be verified from these raster screenshots alone. The original source, exact fonts, icon files, photography, interaction states, device breakpoints, and motion settings were not provided; the reference URLs were not accessible to the browser fetch in this environment. This implementation therefore targets a close visual reproduction of the visible layouts and style tokens, while keeping real Gym SaaS data, route behavior, permission checks, and launch-critical accuracy. Any component not shown is styled using these tokens rather than being claimed as an exact recovered design.
+
+
+## Multi-tenant marketing positioning
+
+The homepage copy should make the product category explicit: Gym SaaS is multi-tenant gym management software, not a consumer-facing website for one gym. Marketing references to the workspace model should explain that each gym has its own workspace while all customers use the same product platform. Gym photos and video are supporting context only; they must not imply a single owned facility, real Gym SaaS customer, real gym location, trainer marketplace, or unsupported product feature.

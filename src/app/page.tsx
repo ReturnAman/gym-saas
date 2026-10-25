@@ -13,7 +13,7 @@ const features = [
   {
     number: "02",
     title: "Track attendance",
-    description: "See today's check-ins, active visits and check-outs in one clear view.",
+    description: "See today&apos;s check-ins, active visits and check-outs in one clear view.",
     icon: "◷",
     tone: "yellow",
   },
@@ -89,18 +89,18 @@ export default function Home() {
               <div className={styles.previewWelcome}>
                 <span className={styles.previewEyebrow}>YOUR GYM, AT A GLANCE</span>
                 <strong>Manage your<br />fitness business</strong>
-                <span className={styles.previewDate}>A clearer view of today's work.</span>
+                <span className={styles.previewDate}>A clearer view of today&apos;s work.</span>
                 <span className={styles.previewButton}>＋ New Member</span>
                 <span className={styles.previewButtonSecondary}>Manage Attendance</span>
               </div>
               <div className={styles.previewMetrics}>
                 <div><span>Members</span><strong>—</strong><small>Member directory</small></div>
-                <div><span>Attendance</span><strong>—</strong><small>Today's visits</small></div>
+                <div><span>Attendance</span><strong>—</strong><small>Today&apos;s visits</small></div>
                 <div><span>Payment claims</span><strong>—</strong><small>Awaiting review</small></div>
                 <div><span>Staff</span><strong>—</strong><small>Workspace access</small></div>
               </div>
               <div className={styles.previewPanel}>
-                <div className={styles.previewPanelHead}><strong>Today's attendance</strong><span>LIVE ACTIVITY</span></div>
+                <div className={styles.previewPanelHead}><strong>Today&apos;s attendance</strong><span>LIVE ACTIVITY</span></div>
                 <div className={styles.previewActivity}><span className={styles.previewPerson}>A</span><span><b>Member check-in</b><small>Attendance record</small></span><i /></div>
                 <div className={styles.previewActivity}><span className={styles.previewPerson}>M</span><span><b>Member directory</b><small>Plans and expiry dates</small></span><i /></div>
                 <div className={styles.previewActivity}><span className={styles.previewPerson}>₹</span><span><b>Payment review</b><small>Claims awaiting verification</small></span><i /></div>
@@ -152,10 +152,10 @@ export default function Home() {
               <div className={styles.miniToolbar}><b>Attendance</b><span>TODAY</span></div>
               <div className={styles.activityPreviewRow}><i>✓</i><span><b>Check-in record</b><small>Member visit recorded</small></span><em>In gym</em></div>
               <div className={styles.activityPreviewRow}><i>↗</i><span><b>Check-out record</b><small>Visit completed</small></span><em>Closed</em></div>
-              <div className={styles.activityPreviewRow}><i>◷</i><span><b>Daily attendance</b><small>One view for today's activity</small></span></div>
+              <div className={styles.activityPreviewRow}><i>◷</i><span><b>Daily attendance</b><small>One view for today&apos;s activity</small></span></div>
             </div>
             <h3>Attendance overview</h3>
-            <p>Review today's check-ins and close open visits from the gym workspace.</p>
+            <p>Review today&apos;s check-ins and close open visits from the gym workspace.</p>
             <Link href="/sign-in" className={styles.learnLink}>Open workspace <span aria-hidden="true">→</span></Link>
           </article>
           <article className={styles.productCard}>

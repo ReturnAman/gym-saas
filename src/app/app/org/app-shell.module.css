@@ -9,26 +9,28 @@
 .sidebar {
   position: relative;
   z-index: 7;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) auto minmax(110px, 1fr);
   width: 100%;
   height: auto;
   flex: 0 0 auto;
-  flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: stretch;
   gap: 22px;
   padding: 25px clamp(20px, 5.5vw, 100px) 14px;
   overflow: visible;
   background: #050505;
   color: #f5f5f5;
 }
-.brand { display: flex; align-items: center; flex: 0 0 auto; gap: 12px; padding: 0; color: #fff; text-decoration: none; }
+.brand { display: flex; justify-self: start; align-items: center; flex: 0 0 auto; gap: 12px; padding: 0; color: #fff; text-decoration: none; }
 .brandMark { display: grid; width: 43px; height: 43px; flex: 0 0 43px; place-items: center; border-radius: 12px; background: #151a10; color: #b8f175; font-size: 1.2rem; font-weight: 900; letter-spacing: -.06em; }
 .brandText { display: grid; line-height: 1.1; }
 .brandText strong { font-size: 1.25rem; font-weight: 690; letter-spacing: -.06em; }
 .brandText small { margin-top: 5px; color: #8c8c8c; font-size: .56rem; font-weight: 750; letter-spacing: .13em; }
 .workspaceCard, .navLabel, .sidebarBottom { display: none; }
 .sidebarNav {
+  grid-column: 2;
+  justify-self: center;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import styles from "./landing.module.css";
@@ -51,6 +52,7 @@ export default function Home() {
             <a href="#top" className={styles.navLink}>Home</a>
             <a href="#features" className={styles.navLink}>Features</a>
             <a href="#workspace" className={styles.navLink}>Workspace</a>
+            <a href="#gym-floor" className={styles.navLink}>Gym floor</a>
             <a href="#how-it-works" className={styles.navLink}>How it works</a>
           </div>
           <div className={styles.navActions}>
@@ -170,6 +172,130 @@ export default function Home() {
             <Link href="/sign-in" className={styles.learnLink}>Open workspace <span aria-hidden="true">→</span></Link>
           </article>
         </div>
+      </section>
+
+
+      <section className={styles.mediaSection} id="gym-floor">
+        <div className={styles.mediaSectionHeader}>
+          <span className={styles.sectionEyebrow}>A LOOK INSIDE THE GYM</span>
+          <h2>Built around<br /><span>real training spaces.</span></h2>
+          <p>From the floor to the equipment, bring the day-to-day rhythm of your gym into one clear workspace.</p>
+        </div>
+        <div className={styles.mediaGrid}>
+          <article className={styles.mediaFeature}>
+            <Image
+              src="https://images.pexels.com/photos/7031706/pexels-photo-7031706.jpeg?auto=compress&cs=tinysrgb&w=1800"
+              alt="Spacious modern gym interior with cardio and strength equipment"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 66vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>THE SPACE YOU RUN</span>
+              <h3>Make room for the work that matters.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaVideoCard}>
+            <div className={styles.mediaVideoFrame}>
+              <video
+                controls
+                playsInline
+                preload="none"
+                poster="https://images.pexels.com/photos/4164463/pexels-photo-4164463.jpeg?auto=compress&cs=tinysrgb&w=1000"
+                aria-label="Video of gym weights and training equipment"
+              >
+                <source src="https://videos.pexels.com/video-files/6389051/6389051-uhd_3840_2160_25fps.mp4" type="video/mp4" />
+                Your browser does not support embedded video.
+              </video>
+            </div>
+            <div className={styles.mediaVideoCopy}>
+              <span>STRENGTH IN MOTION</span>
+              <h3>Every detail has its place.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaImageCard}>
+            <Image
+              src="https://images.pexels.com/photos/12250460/pexels-photo-12250460.jpeg?auto=compress&cs=tinysrgb&w=1000"
+              alt="Rows of treadmills in a modern gym"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 33vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>ON THE GYM FLOOR</span>
+              <h3>Made for the everyday routine.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaImageCard}>
+            <Image
+              src="https://images.pexels.com/photos/32610333/pexels-photo-32610333.jpeg?auto=compress&cs=tinysrgb&w=1000"
+              alt="Medicine balls and gym training equipment on a rack"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 33vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>READY FOR THE NEXT SET</span>
+              <h3>Keep the focus on people.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaPortraitCard}>
+            <Image
+              src="https://images.pexels.com/photos/4162485/pexels-photo-4162485.jpeg?auto=compress&cs=tinysrgb&w=1000"
+              alt="Colour-coded weight plates in a strength-training area"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 33vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>STRENGTH & EQUIPMENT</span>
+              <h3>Built for movement.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaVideoCard}>
+            <div className={styles.mediaVideoFrame}>
+              <video
+                controls
+                playsInline
+                preload="none"
+                poster="https://images.pexels.com/photos/7031706/pexels-photo-7031706.jpeg?auto=compress&cs=tinysrgb&w=900"
+                aria-label="Video showing a gym training space"
+              >
+                <source src="https://videos.pexels.com/video-files/6388410/6388410-uhd_2160_3840_25fps.mp4" type="video/mp4" />
+                Your browser does not support embedded video.
+              </video>
+            </div>
+            <div className={styles.mediaVideoCopy}>
+              <span>IN MOTION</span>
+              <h3>A space for showing up.</h3>
+            </div>
+          </article>
+
+          <article className={styles.mediaImageCard}>
+            <Image
+              src="https://images.pexels.com/photos/39647098/pexels-photo-39647098.jpeg?auto=compress&cs=tinysrgb&w=1000"
+              alt="Athlete using strength-training equipment in a dimly lit gym"
+              fill
+              unoptimized
+              sizes="(max-width: 720px) 100vw, 33vw"
+              className={styles.mediaImage}
+            />
+            <div className={styles.mediaOverlay}>
+              <span>TRAINING TIME</span>
+              <h3>Support the work behind every session.</h3>
+            </div>
+          </article>
+        </div>
+        <p className={styles.mediaFootnote}>Videos play on demand so the page stays lightweight while you browse.</p>
       </section>
 
       <section className={styles.ctaSection}>

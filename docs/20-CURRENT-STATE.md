@@ -537,8 +537,7 @@ Supported by current repository evidence unless marked otherwise:
    the OTP path. Failure logging does not yet cover the member
    create/update, attendance, settings, or onboarding actions.
 8. **Readiness probe — added on the deployment-readiness branch.** `/api/health` remains a shallow liveness check; `/api/ready` executes a small database query and returns `503` without leaking details when the database is unavailable.
-9. **PWA basics — Not started.** No `public/` directory, manifest,
-    or icons exist.
+9. **PWA role-aware entry — implemented on the UI/readiness draft branch; CI pending.** The app manifest starts at `/open`; that route resolves a valid member session to `/member`, a signed-in Clerk owner/staff to the protected workspace (or onboarding), and shows a compact role chooser when signed out. This does not provide offline caching/service-worker behavior. The existing primary-gym membership policy remains; gym switching is still outstanding.
 10. **Gym switcher — Not started.** Staff and claims surfaces resolve
     the actor's primary (earliest) gym only; members can belong to
     multiple gyms but post-login gym selection is limited.
@@ -547,7 +546,9 @@ Supported by current repository evidence unless marked otherwise:
 12. **Owner dashboard** — the organization home is a link hub; no
     at-a-glance dues/expiry/attendance summary exists.
 13. **SaaS billing/trial — Not started.** No subscription or trial
-    mechanics for gyms.
+    mechanics for gyms. Keep the public 7-day trial promise out of the live CTA
+    until trial start, expiry behavior and the manual subscription path are
+    implemented and tested.
 14. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.

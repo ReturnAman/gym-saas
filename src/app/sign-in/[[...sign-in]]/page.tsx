@@ -24,7 +24,7 @@ export default function SignInPage() {
         </div>
         <div className={styles.authCard}>
           <div className={styles.authCardHeader}><span>WELCOME BACK</span><h2>Sign in to Gym SaaS</h2><p>Use the account connected to your gym workspace.</p></div>
-          <div className={styles.clerkMount}><SignIn /></div>
+          <div className={styles.clerkMount}><SignIn fallbackRedirectUrl="/open" signUpFallbackRedirectUrl="/open" /></div>
           <p className={styles.authFootnote}><span>✳</span> Secure sign-in powered by Clerk</p>
         </div>
       </section>

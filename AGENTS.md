@@ -304,6 +304,21 @@ The backend remains authoritative.
 
 ---
 
+
+## 12.1 Locked UI design system — non-negotiable
+
+Gym SaaS has an approved visual direction. Do not redesign or change it when adding product features, new routes, forms, dashboards, empty states, modals, settings, member pages, or onboarding steps. Before any UI change, read `docs/ui-design-system.md`, `docs/reference-ui-spec.md`, and the relevant existing CSS modules/components.
+
+Required shared visual language:
+- Near-black canvas (`#050505`), near-black panels (`#0B0B0B`), quiet 1px dark borders (`#262626`), white headings (`#F5F5F5`), muted gray supporting text (`#A4A4A4`), and lime accent (`#B8F175`).
+- Primary actions use lime with dark text; secondary actions use charcoal/transparent surfaces and subtle borders.
+- Reuse the established rounded-pill navigation, white active workspace tab, restrained metric panels, compact status pills, typography, spacing, radius, and focus treatment. Preserve responsive behavior and reduced-motion support.
+- Marketing pages may use the already-established white rounded navbar. Authenticated application screens use the dark workspace visual system. Do not turn member/owner experiences into separate unrelated brands.
+- Gym imagery is illustrative context for a multi-tenant software platform; never imply Gym SaaS is a single gym or that depicted people/facilities are customers, employees, or owned locations.
+- New screens must reuse existing components and tokens where practical. Extend the existing system; do not introduce another palette, a new design language, random gradients, or ad-hoc component styling.
+- Keep product logic changes separate from styling whenever possible. If a requested feature appears to require changing the locked visual direction, stop and request approval before doing so.
+- Preserve the design system for loading, success, validation errors, empty states, access-denied screens, and expired-session flows too.
+
 # 13. Code Quality
 
 Prefer:

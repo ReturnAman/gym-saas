@@ -18,7 +18,13 @@ export default function manifest(): MetadataRoute.Manifest {
         src: "/gym-saas-icon.svg",
         sizes: "any",
         type: "image/svg+xml",
-        purpose: "any maskable",
+        purpose: "any",
+      },
+      {
+        src: "/gym-saas-icon.svg",
+        sizes: "any",
+        type: "image/svg+xml",
+        purpose: "maskable",
       },
     ],
   };

@@ -12,7 +12,7 @@ test("PWA app entry offers the correct signed-out paths", async ({ page }) => {
   await page.goto("/open");
   await expect(page.getByRole("heading", { name: /where would you like to go/i })).toBeVisible();
   await expect(page.getByRole("link", { name: /gym owner or staff/i })).toHaveAttribute("href", "/sign-in");
-  await expect(page.getByRole("link", { name: /member/i })).toHaveAttribute("href", "/member/scan");
+  await expect(page.getByRole("link", { name: /i.m a member/i })).toHaveAttribute("href", "/member/scan");
 });
 
 test("PWA manifest opens into role-aware app entry", async ({ request }) => {

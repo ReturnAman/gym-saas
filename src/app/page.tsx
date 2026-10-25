@@ -13,7 +13,7 @@ const features = [
   {
     number: "02",
     title: "Track attendance",
-    description: "See today&apos;s check-ins, active visits and check-outs in one clear view.",
+    description: "See today's check-ins, active visits and check-outs in one clear view.",
     icon: "◷",
     tone: "yellow",
   },

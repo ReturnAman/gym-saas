@@ -26,10 +26,10 @@ export default async function OnboardingPage() {
         <h1>Give your gym<br /><em>a home.</em></h1>
         <p className={styles.description}>Create your gym workspace to organise member profiles, daily attendance and payment records in one place.</p>
         <form action={createOrganizationAction} className={styles.form}>
-          <label htmlFor="name">Gym or studio name</label>
+          <label htmlFor="name">Gym name</label>
           <input id="name" name="name" type="text" required maxLength={MAX_ORGANIZATION_NAME_LENGTH} autoComplete="organization" placeholder="e.g. Northside Fitness" />
           <p className={styles.hint}>You’ll be the owner of this workspace. You can add the rest of your gym details in settings.</p>
-          <button type="submit">Create gym workspace <span aria-hidden="true">→</span></button>
+          <button type="submit" aria-label="Create gym">Create gym workspace <span aria-hidden="true">→</span></button>
         </form>
         <div className={styles.secureNote}><span>✓</span> Your workspace and member records are kept within your gym.</div>
       </section>

@@ -9,6 +9,7 @@ const {
   mockMembershipFindFirst,
   mockSessionFindFirst,
   mockSessionFindMany,
+  mockSessionCount,
   mockTxSessionFindMany,
   mockSessionCreate,
   mockSessionUpdate,
@@ -22,6 +23,7 @@ const {
   mockMembershipFindFirst: vi.fn(),
   mockSessionFindFirst: vi.fn(),
   mockSessionFindMany: vi.fn(),
+  mockSessionCount: vi.fn(),
   mockTxSessionFindMany: vi.fn(),
   mockSessionCreate: vi.fn(),
   mockSessionUpdate: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock("@/lib/server/db", () => ({
     attendanceSession: {
       findFirst: mockSessionFindFirst,
       findMany: mockSessionFindMany,
+      count: mockSessionCount,
     },
     $transaction: mockTransaction,
   },
@@ -58,6 +61,7 @@ import {
   AttendanceConfirmationRequiredError,
   AttendanceNoMembershipError,
   AttendanceNotFoundError,
+  MAX_TODAY_SESSIONS,
   canCheckInAttendance,
   canManageAttendance,
   canViewAttendance,
@@ -114,6 +118,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockRoleScope("OWNER");
   mockOrgMembershipFindMany.mockResolvedValue([]);
+  mockSessionCount.mockResolvedValue(0);
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
       attendanceSession: {
@@ -600,8 +605,9 @@ describe("listTodayAttendance", () => {
         member: { name: "Asha Rao" },
       },
     ]);
+    mockSessionCount.mockResolvedValue(1);
 
-    const items = await listTodayAttendance(USER_ID, { now });
+    const result = await listTodayAttendance(USER_ID, { now });
     expect(mockSessionFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -609,21 +615,73 @@ describe("listTodayAttendance", () => {
           checkInAt: { gte: bounds.startUtc, lt: bounds.endUtc },
         },
         orderBy: { checkInAt: "desc" },
+        take: MAX_TODAY_SESSIONS + 1,
       }),
     );
     expect(bounds.startUtc.toISOString()).toBe("2026-10-09T18:30:00.000Z");
     expect(bounds.endUtc.toISOString()).toBe("2026-10-10T18:30:00.000Z");
-    expect(items[0]).toMatchObject({
+    expect(result.sessions[0]).toMatchObject({
       id: SESSION_ID,
       memberName: "Asha Rao",
       checkOutAt: null,
     });
+    expect(result.totalCount).toBe(1);
+    expect(result.openCount).toBe(1);
+    expect(result.truncated).toBe(false);
+    // Both counts use the same org + day window; the open count adds
+    // the still-open filter.
+    expect(mockSessionCount).toHaveBeenCalledWith({
+      where: {
+        organizationId: ORG_ID,
+        checkInAt: { gte: bounds.startUtc, lt: bounds.endUtc },
+      },
+    });
+    expect(mockSessionCount).toHaveBeenCalledWith({
+      where: {
+        organizationId: ORG_ID,
+        checkInAt: { gte: bounds.startUtc, lt: bounds.endUtc },
+        checkOutAt: null,
+      },
+    });
+  });
+
+  it("bounds the displayed list while the counts stay exact beyond the cap", async () => {
+    // The probe returns cap + 1 rows, every displayed one already
+    // checked out — yet 7 sessions (outside the displayed rows) are
+    // still open, and the day's real total is far past the cap.
+    mockSessionFindMany.mockResolvedValue(
+      Array.from({ length: MAX_TODAY_SESSIONS + 1 }, (_, i) => ({
+        id: `session-${i}`,
+        memberId: MEMBER_ID,
+        checkedInBy: USER_ID,
+        source: "MANUAL",
+        checkInAt: new Date("2026-10-10T02:00:00.000Z"),
+        checkOutAt: new Date("2026-10-10T03:00:00.000Z"),
+        member: { name: "Asha Rao" },
+      })),
+    );
+    mockSessionCount.mockImplementation(
+      async (args: { where: Record<string, unknown> }) =>
+        args.where.checkOutAt === null ? 7 : 1500,
+    );
+    const result = await listTodayAttendance(USER_ID, { now: NOW });
+    expect(result.sessions).toHaveLength(MAX_TODAY_SESSIONS);
+    expect(result.truncated).toBe(true);
+    expect(result.totalCount).toBe(1500);
+    // Open sessions older than the displayed rows are still counted,
+    // so the close-all affordance stays correct.
+    expect(result.openCount).toBe(7);
   });
 
   it("lets TRAINER view today's attendance", async () => {
     mockRoleScope("TRAINER");
     mockSessionFindMany.mockResolvedValue([]);
-    await expect(listTodayAttendance(USER_ID, { now: NOW })).resolves.toEqual([]);
+    await expect(listTodayAttendance(USER_ID, { now: NOW })).resolves.toEqual({
+      sessions: [],
+      totalCount: 0,
+      openCount: 0,
+      truncated: false,
+    });
   });
 
   it("refuses MEMBER role", async () => {
@@ -632,5 +690,6 @@ describe("listTodayAttendance", () => {
       listTodayAttendance(USER_ID, { now: NOW }),
     ).rejects.toBeInstanceOf(AttendanceAuthorizationError);
     expect(mockSessionFindMany).not.toHaveBeenCalled();
+    expect(mockSessionCount).not.toHaveBeenCalled();
   });
 });

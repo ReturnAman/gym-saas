@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { requireOrganizationContext } from "@/lib/server/authorization";
 import {
+  PENDING_CLAIMS_QUEUE_LIMIT,
   PaymentClaimAuthorizationError,
   canVerifyPaymentClaim,
   listPendingClaimsForReview,
@@ -79,8 +80,11 @@ export default async function PaymentClaimsPage() {
   }
 
   let claims: PendingClaimReviewView[];
+  let totalPending: number;
   try {
-    claims = await listPendingClaimsForReview(user.id);
+    const queue = await listPendingClaimsForReview(user.id);
+    claims = queue.claims;
+    totalPending = queue.totalPending;
   } catch (error) {
     if (error instanceof PaymentClaimAuthorizationError) {
       return noAccess;
@@ -100,7 +104,14 @@ export default async function PaymentClaimsPage() {
           </p>
         </section>
       ) : (
-        <ClaimsManager claims={claims.map(toRow)} />
+        <>
+          {totalPending > claims.length && (
+            <p className={styles.gymNote} role="status">
+              {`Showing the oldest ${PENDING_CLAIMS_QUEUE_LIMIT} of ${totalPending} pending claims. Claims are verified oldest first — the rest will appear as you work through the queue.`}
+            </p>
+          )}
+          <ClaimsManager claims={claims.map(toRow)} />
+        </>
       )}
     </main>
   );

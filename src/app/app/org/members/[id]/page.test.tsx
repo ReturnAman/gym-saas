@@ -102,7 +102,9 @@ const DETAIL: MemberDetail = {
     membershipStatus: "ACTIVE",
     paymentStatus: "PARTIALLY_PAID",
     payments: [],
+    paymentsTruncated: false,
     reversals: [],
+    reversalsTruncated: false,
   },
   permissions: {
     canView: true,
@@ -178,7 +180,7 @@ async function renderDetail(role = "OWNER", id = "member-visible-1") {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetMemberDetail.mockResolvedValue(DETAIL);
-  mockListClaimsForMember.mockResolvedValue(CLAIMS);
+  mockListClaimsForMember.mockResolvedValue({ items: CLAIMS, truncated: false });
 });
 
 describe("member detail — claim history section (C3-S3)", () => {
@@ -223,7 +225,7 @@ describe("member detail — claim history section (C3-S3)", () => {
   });
 
   it("shows the empty state when the member has no claims", async () => {
-    mockListClaimsForMember.mockResolvedValue([]);
+    mockListClaimsForMember.mockResolvedValue({ items: [], truncated: false });
     const html = normalize(await renderDetail());
     expect(html).toContain("Payment claims");
     expect(html).toContain("No payment claims from this member yet.");
@@ -378,5 +380,30 @@ describe("member detail — unknown or foreign member", () => {
       MemberDetailPage({ params: Promise.resolve({ id: "foreign-1" }) }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(mockListClaimsForMember).not.toHaveBeenCalled();
+  });
+});
+
+describe("member detail — truncated histories (M1)", () => {
+  it("shows a latest-50 notice under each truncated table and none otherwise", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL_WITH_REVERSALS,
+      membership: {
+        ...DETAIL_WITH_REVERSALS.membership!,
+        paymentsTruncated: true,
+        reversalsTruncated: true,
+      },
+    });
+    mockListClaimsForMember.mockResolvedValue({
+      items: CLAIMS,
+      truncated: true,
+    });
+    const html = normalize(await renderDetail());
+    expect(html).toContain("only the tables below are shortened");
+    expect(html.match(/Showing the latest 50 records\./g)).toHaveLength(3);
+  });
+
+  it("shows no truncation notice when every history fits", async () => {
+    const html = normalize(await renderDetail());
+    expect(html).not.toContain("Showing the latest");
   });
 });

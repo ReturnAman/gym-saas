@@ -7,6 +7,7 @@ import {
 } from "@/lib/attendance";
 import { requireOrganizationContext } from "@/lib/server/authorization";
 import {
+  MAX_TODAY_SESSIONS,
   getAttendancePermissions,
   listTodayAttendance,
 } from "@/lib/server/attendance";
@@ -26,9 +27,13 @@ import styles from "./attendance.module.css";
 export default async function AttendancePage() {
   const { user, membership } = await requireOrganizationContext();
   const permissions = getAttendancePermissions(membership.role);
-  const sessions = await listTodayAttendance(user.id);
+  const today = await listTodayAttendance(user.id);
+  const sessions = today.sessions;
   const now = new Date();
-  const openCount = sessions.filter((s) => s.checkOutAt === null).length;
+  // Exact database counts from the service — never derived from the
+  // (possibly bounded) displayed list, so an open session outside the
+  // list still counts here and keeps the close-all control visible.
+  const openCount = today.openCount;
 
   return (
     <main>
@@ -39,9 +44,14 @@ export default async function AttendancePage() {
         </Link>
       </div>
       <p className={styles.hint}>
-        {formatKolkataDate(now)} · {sessions.length}{" "}
-        {sessions.length === 1 ? "check-in" : "check-ins"} today
+        {formatKolkataDate(now)} · {today.totalCount}{" "}
+        {today.totalCount === 1 ? "check-in" : "check-ins"} today
       </p>
+      {today.truncated && (
+        <p className={styles.hint} role="status">
+          {`Showing the latest ${MAX_TODAY_SESSIONS} of ${today.totalCount} check-ins. The totals count every check-in today, including the ones not shown.`}
+        </p>
+      )}
 
       {sessions.length === 0 ? (
         <p className={styles.empty}>No check-ins yet today.</p>

@@ -15,12 +15,15 @@ import {
 } from "@/lib/server/attendance";
 import { getMemberDetail } from "@/lib/server/members";
 import {
+  CLAIM_HISTORY_LIMIT,
   PaymentClaimAuthorizationError,
   PaymentClaimNotFoundError,
   canVerifyPaymentClaim,
   listClaimsForMember,
+  type ClaimsForMember,
   type PaymentClaimView,
 } from "@/lib/server/payment-claims";
+import { PAYMENT_HISTORY_LIMIT } from "@/lib/server/payments";
 import {
   MEMBERSHIP_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
@@ -76,7 +79,7 @@ function claimBadgeClass(status: PaymentClaimView["status"]): string {
 async function loadClaimHistory(
   userId: string,
   memberId: string,
-): Promise<PaymentClaimView[] | null> {
+): Promise<ClaimsForMember | null> {
   try {
     return await listClaimsForMember(userId, memberId);
   } catch (error) {
@@ -209,6 +212,13 @@ export default async function MemberDetailPage({
                   Paid is net of reversals — see Reversals below.
                 </p>
               )}
+              {(membership.paymentsTruncated ||
+                membership.reversalsTruncated) && (
+                <p className={styles.hint}>
+                  Paid and outstanding above always cover the full history;
+                  only the tables below are shortened.
+                </p>
+              )}
 
               <h3>Payment history</h3>
               {membership.payments.length === 0 ? (
@@ -282,6 +292,11 @@ export default async function MemberDetailPage({
                   </table>
                 </div>
               )}
+              {membership.paymentsTruncated && (
+                <p className={styles.hint}>
+                  {`Showing the latest ${PAYMENT_HISTORY_LIMIT} records.`}
+                </p>
+              )}
 
               <h3>Reversals</h3>
               {membership.reversals.length === 0 ? (
@@ -316,6 +331,11 @@ export default async function MemberDetailPage({
                   </table>
                 </div>
               )}
+              {membership.reversalsTruncated && (
+                <p className={styles.hint}>
+                  {`Showing the latest ${PAYMENT_HISTORY_LIMIT} records.`}
+                </p>
+              )}
 
               {detail.permissions.canRecordPayment && (
                 <div className={styles.detailActions}>
@@ -343,7 +363,7 @@ export default async function MemberDetailPage({
               the{" "}
               <Link href="/app/org/payment-claims">payment claims queue</Link>.
             </p>
-            {claimHistory.length === 0 ? (
+            {claimHistory.items.length === 0 ? (
               <p className={styles.empty}>
                 No payment claims from this member yet.
               </p>
@@ -361,7 +381,7 @@ export default async function MemberDetailPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {claimHistory.map((claim) => (
+                    {claimHistory.items.map((claim) => (
                       <tr key={claim.id}>
                         <td>{formatInr(claim.claimedAmountPaise)}</td>
                         <td>{PAYMENT_METHOD_LABELS[claim.paymentMethod]}</td>
@@ -387,6 +407,11 @@ export default async function MemberDetailPage({
                   </tbody>
                 </table>
               </div>
+            )}
+            {claimHistory.truncated && (
+              <p className={styles.hint}>
+                {`Showing the latest ${CLAIM_HISTORY_LIMIT} records.`}
+              </p>
             )}
           </section>
         )}

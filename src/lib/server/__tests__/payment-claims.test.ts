@@ -8,6 +8,7 @@ const {
   mockMembershipFindFirst,
   mockClaimFindFirst,
   mockClaimFindMany,
+  mockClaimCount,
   mockTxQueryRaw,
   mockTxClaimFindMany,
   mockTxClaimCreate,
@@ -23,6 +24,7 @@ const {
   mockMembershipFindFirst: vi.fn(),
   mockClaimFindFirst: vi.fn(),
   mockClaimFindMany: vi.fn(),
+  mockClaimCount: vi.fn(),
   mockTxQueryRaw: vi.fn(),
   mockTxClaimFindMany: vi.fn(),
   mockTxClaimCreate: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock("@/lib/server/db", () => ({
     paymentClaim: {
       findFirst: mockClaimFindFirst,
       findMany: mockClaimFindMany,
+      count: mockClaimCount,
     },
     payment: { groupBy: mockPaymentGroupBy },
     paymentReversal: { groupBy: mockPaymentReversalGroupBy },
@@ -56,7 +59,9 @@ vi.mock("@/lib/server/auth", () => ({
 
 import { PaymentValidationError } from "@/lib/members";
 import {
+  CLAIM_HISTORY_LIMIT,
   MAX_PENDING_CLAIMS_PER_MEMBERSHIP,
+  PENDING_CLAIMS_QUEUE_LIMIT,
   PaymentClaimAuthorizationError,
   PaymentClaimConflictError,
   PaymentClaimDuplicateError,
@@ -66,7 +71,6 @@ import {
   confirmPaymentClaim,
   listClaimsForMember,
   listOwnPaymentClaims,
-  listPendingClaimsForOrganization,
   listPendingClaimsForReview,
   rejectPaymentClaim,
   submitPaymentClaim,
@@ -129,6 +133,7 @@ beforeEach(() => {
   mockAuditLogCreate.mockResolvedValue({ id: "audit-id" });
   mockPaymentGroupBy.mockResolvedValue([]);
   mockPaymentReversalGroupBy.mockResolvedValue([]);
+  mockClaimCount.mockResolvedValue(0);
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
       $queryRaw: mockTxQueryRaw,
@@ -298,24 +303,6 @@ describe("listOwnPaymentClaims", () => {
   });
 });
 
-describe("listPendingClaimsForOrganization", () => {
-  it("denies roles that cannot verify claims", async () => {
-    mockOrgMembershipFindFirst.mockResolvedValue(staffMembership("TRAINER"));
-    await expect(
-      listPendingClaimsForOrganization(STAFF_ID),
-    ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
-    expect(mockClaimFindMany).not.toHaveBeenCalled();
-  });
-
-  it("lists only the actor's gym pending claims, oldest first", async () => {
-    mockClaimFindMany.mockResolvedValue([]);
-    await listPendingClaimsForOrganization(STAFF_ID);
-    const arg = mockClaimFindMany.mock.calls[0]?.[0];
-    expect(arg.where).toEqual({ organizationId: ORG_ID, status: "PENDING" });
-    expect(arg.orderBy).toEqual({ createdAt: "asc" });
-  });
-});
-
 function reviewRow(overrides: Record<string, unknown> = {}) {
   return {
     ...claimRow(),
@@ -339,6 +326,7 @@ describe("listPendingClaimsForReview", () => {
       listPendingClaimsForReview(STAFF_ID),
     ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
     expect(mockClaimFindMany).not.toHaveBeenCalled();
+    expect(mockClaimCount).not.toHaveBeenCalled();
   });
 
   it("queries only the actor's gym pending claims, oldest first, with display fields", async () => {
@@ -347,6 +335,7 @@ describe("listPendingClaimsForReview", () => {
     const arg = mockClaimFindMany.mock.calls[0]?.[0];
     expect(arg.where).toEqual({ organizationId: ORG_ID, status: "PENDING" });
     expect(arg.orderBy).toEqual({ createdAt: "asc" });
+    expect(arg.take).toBe(PENDING_CLAIMS_QUEUE_LIMIT);
     expect(arg.include.member.select).toEqual({
       name: true,
       phoneNumber: true,
@@ -356,6 +345,31 @@ describe("listPendingClaimsForReview", () => {
       fee: true,
       expiryDate: true,
     });
+    // The exact total comes from a count over the same scoped filter.
+    const countArg = mockClaimCount.mock.calls[0]?.[0];
+    expect(countArg.where).toEqual({
+      organizationId: ORG_ID,
+      status: "PENDING",
+    });
+  });
+
+  it("bounds the displayed queue at the limit while reporting the exact pending total", async () => {
+    mockClaimCount.mockResolvedValue(137);
+    mockClaimFindMany.mockResolvedValue(
+      Array.from({ length: PENDING_CLAIMS_QUEUE_LIMIT }, (_, i) =>
+        reviewRow({ id: `claim-${i}` }),
+      ),
+    );
+    const result = await listPendingClaimsForReview(STAFF_ID);
+    expect(result.claims).toHaveLength(PENDING_CLAIMS_QUEUE_LIMIT);
+    expect(result.totalPending).toBe(137);
+    expect(mockClaimFindMany.mock.calls[0]?.[0].take).toBe(
+      PENDING_CLAIMS_QUEUE_LIMIT,
+    );
+    // Balance sums are computed for the displayed claims' memberships
+    // only — never for the unbounded queue behind them.
+    const groupArg = mockPaymentGroupBy.mock.calls[0]?.[0];
+    expect(groupArg.where.membershipId).toEqual({ in: [MEMBERSHIP_ID] });
   });
 
   it("maps member/membership display fields and confirmed-only balance context in one grouped sum", async () => {
@@ -379,9 +393,12 @@ describe("listPendingClaimsForReview", () => {
         _sum: { amount: new Prisma.Decimal("400") },
       },
     ]);
+    mockClaimCount.mockResolvedValue(2);
 
-    const views = await listPendingClaimsForReview(STAFF_ID);
+    const { claims: views, totalPending } =
+      await listPendingClaimsForReview(STAFF_ID);
 
+    expect(totalPending).toBe(2);
     expect(mockPaymentGroupBy).toHaveBeenCalledTimes(1);
     expect(views).toHaveLength(2);
     expect(views[0]).toMatchObject({
@@ -448,7 +465,8 @@ describe("listClaimsForMember", () => {
         payment: null,
       },
     ]);
-    const views = await listClaimsForMember(STAFF_ID, MEMBER_ID);
+    const result = await listClaimsForMember(STAFF_ID, MEMBER_ID);
+    const views = result.items;
     const memberArg = mockMemberFindFirst.mock.calls.at(-1)?.[0];
     expect(memberArg.where).toEqual({ id: MEMBER_ID, organizationId: ORG_ID });
     const claimArg = mockClaimFindMany.mock.calls[0]?.[0];
@@ -457,8 +475,28 @@ describe("listClaimsForMember", () => {
       memberId: MEMBER_ID,
     });
     expect(claimArg.orderBy).toEqual({ createdAt: "desc" });
+    expect(claimArg.take).toBe(CLAIM_HISTORY_LIMIT + 1);
+    expect(result.truncated).toBe(false);
     expect(views.map((view) => view.status)).toEqual(["CONFIRMED", "PENDING"]);
     expect(views[0]?.confirmedAmountPaise).toBe(600_000);
+  });
+
+  it("caps the history at the limit and flags truncation via the probe row", async () => {
+    mockClaimFindMany.mockResolvedValue(
+      Array.from({ length: CLAIM_HISTORY_LIMIT + 1 }, () => ({
+        ...claimRow(),
+        organizationId: ORG_ID,
+        createdAt: new Date("2026-10-11T09:00:00.000Z"),
+        verifiedAt: null,
+        payment: null,
+      })),
+    );
+    const result = await listClaimsForMember(STAFF_ID, MEMBER_ID);
+    expect(result.items).toHaveLength(CLAIM_HISTORY_LIMIT);
+    expect(result.truncated).toBe(true);
+    expect(mockClaimFindMany.mock.calls[0]?.[0].take).toBe(
+      CLAIM_HISTORY_LIMIT + 1,
+    );
   });
 
   it("treats foreign and nonexistent members identically as not found", async () => {

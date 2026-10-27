@@ -630,10 +630,9 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         explanation: "Desk typo",
       });
 
-      const receipts = await listPaymentsForMembership(
-        gym.org.id,
-        gym.membership.id,
-      );
+      const { items: receipts, truncated: receiptsTruncated } =
+        await listPaymentsForMembership(gym.org.id, gym.membership.id);
+      expect(receiptsTruncated).toBe(false);
       expect(receipts).toHaveLength(1);
       expect(receipts[0]).toMatchObject({
         id: paymentId,
@@ -647,16 +646,15 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         reason: "OTHER",
         explanation: "",
       });
-      const receiptsAfter = await listPaymentsForMembership(
+      const { items: receiptsAfter } = await listPaymentsForMembership(
         gym.org.id,
         gym.membership.id,
       );
       expect(receiptsAfter[0]?.remainingReversiblePaise).toBe(0);
 
-      const reversals = await listReversalsForMembership(
-        gym.org.id,
-        gym.membership.id,
-      );
+      const { items: reversals, truncated: reversalsTruncated } =
+        await listReversalsForMembership(gym.org.id, gym.membership.id);
+      expect(reversalsTruncated).toBe(false);
       expect(reversals).toHaveLength(2);
       // Newest first.
       expect(reversals[0]).toMatchObject({

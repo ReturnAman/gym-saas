@@ -376,10 +376,14 @@ export interface MemberDetailMembership {
   outstandingPaise: number;
   membershipStatus: MembershipStatus;
   paymentStatus: PaymentStatus;
-  /** Confirmed payment history (gross receipts), newest first. */
+  /** Confirmed payment history (gross receipts), newest first, display-bounded. */
   payments: PaymentHistoryItem[];
-  /** Reversal history netting against the receipts, newest first. */
+  /** True when older payments exist beyond the displayed records. */
+  paymentsTruncated: boolean;
+  /** Reversal history netting against the receipts, newest first, display-bounded. */
   reversals: PaymentReversalHistoryItem[];
+  /** True when older reversals exist beyond the displayed records. */
+  reversalsTruncated: boolean;
 }
 
 export interface MemberDetail {
@@ -428,11 +432,11 @@ export async function getMemberDetail(
       feePaise,
       sums.get(latest.id) ?? 0,
     );
-    const payments = await listPaymentsForMembership(
+    const paymentHistory = await listPaymentsForMembership(
       scope.organizationId,
       latest.id,
     );
-    const reversals = await listReversalsForMembership(
+    const reversalHistory = await listReversalsForMembership(
       scope.organizationId,
       latest.id,
     );
@@ -447,8 +451,10 @@ export async function getMemberDetail(
       outstandingPaise,
       membershipStatus: deriveMembershipStatus(latest.expiryDate),
       paymentStatus: derivePaymentStatus(feePaise, paidPaise),
-      payments,
-      reversals,
+      payments: paymentHistory.items,
+      paymentsTruncated: paymentHistory.truncated,
+      reversals: reversalHistory.items,
+      reversalsTruncated: reversalHistory.truncated,
     };
   }
 

@@ -80,6 +80,23 @@ import {
 /** Maximum number of undecided claims a member may hold per membership. */
 export const MAX_PENDING_CLAIMS_PER_MEMBERSHIP = 3;
 
+/**
+ * Display bound for the staff verification queue (M1): the queue is
+ * oldest-first, so the page shows the oldest claims up to this limit
+ * together with the exact total pending count — a truncated queue is
+ * always visible as truncated, never silently shortened. Matches the
+ * join-request queue's bound (MAX_QUEUE_REQUESTS).
+ */
+export const PENDING_CLAIMS_QUEUE_LIMIT = 100;
+
+/**
+ * Display bound for one member's claim history (M1): newest first,
+ * matching the member-facing history's existing bound
+ * (listOwnPaymentClaims). Older records remain in the database; the
+ * bound only limits what one page renders.
+ */
+export const CLAIM_HISTORY_LIMIT = 50;
+
 /** Thrown when the caller lacks permission or the tenant scope fails. */
 export class PaymentClaimAuthorizationError extends Error {
   constructor(message: string) {
@@ -523,30 +540,17 @@ export async function listOwnPaymentReversals(
     select: { id: true },
   });
   if (!membership) return [];
-  const reversals = await listReversalsForMembership(
+  const { items } = await listReversalsForMembership(
     scope.organizationId,
     membership.id,
   );
-  return reversals.map((reversal) => ({
+  return items.map((reversal) => ({
     id: reversal.id,
     paymentId: reversal.paymentId,
     amountPaise: reversal.amountPaise,
     reason: reversal.reason,
     reversedAt: reversal.reversedAt,
   }));
-}
-
-/** The gym's undecided claims, oldest first — the verification queue. */
-export async function listPendingClaimsForOrganization(
-  staffUserId: string,
-): Promise<PaymentClaimView[]> {
-  const scope = await requireVerifyScope(staffUserId);
-  const rows = await db.paymentClaim.findMany({
-    where: { organizationId: scope.organizationId, status: "PENDING" },
-    orderBy: { createdAt: "asc" },
-    include: CLAIM_INCLUDE,
-  });
-  return rows.map(toClaimView);
 }
 
 const CLAIM_REVIEW_INCLUDE = {
@@ -567,13 +571,24 @@ export interface PendingClaimReviewView extends PaymentClaimView {
   outstandingPaise: number;
 }
 
+/** The verification queue: the displayed claims plus the exact total. */
+export interface PendingClaimsForReview {
+  /** Oldest-first, at most PENDING_CLAIMS_QUEUE_LIMIT entries. */
+  claims: PendingClaimReviewView[];
+  /** Exact number of PENDING claims in the caller's organization. */
+  totalPending: number;
+}
+
 /**
  * The gym's verification queue with member/membership display fields
- * and per-membership balance context (C3-S1). Same authorization and
- * primary-gym scope as listPendingClaimsForOrganization; balances come
- * from one grouped sum over confirmed payments for the queued
- * memberships — no per-claim queries, and pending claims are never
- * included in the paid totals. The linked member and membership rows
+ * and per-membership balance context (C3-S1). Authorization and
+ * primary-gym scope come from requireVerifyScope; balances come
+ * from one grouped sum over confirmed payments for the DISPLAYED
+ * claims' memberships — no per-claim queries, and pending claims
+ * are never included in the paid totals. The queue is bounded at
+ * the database (PENDING_CLAIMS_QUEUE_LIMIT, oldest first) and the
+ * exact pending total rides along, so a truncated queue is always
+ * visible as truncated. The linked member and membership rows
  * are guaranteed by the claims' composite foreign keys (a claim
  * cannot exist without them, and no flow deletes members or
  * memberships), so the include always resolves inside the claim's
@@ -581,19 +596,27 @@ export interface PendingClaimReviewView extends PaymentClaimView {
  */
 export async function listPendingClaimsForReview(
   staffUserId: string,
-): Promise<PendingClaimReviewView[]> {
+): Promise<PendingClaimsForReview> {
   const scope = await requireVerifyScope(staffUserId);
-  const rows = await db.paymentClaim.findMany({
-    where: { organizationId: scope.organizationId, status: "PENDING" },
-    orderBy: { createdAt: "asc" },
-    include: CLAIM_REVIEW_INCLUDE,
-  });
+  const where = {
+    organizationId: scope.organizationId,
+    status: "PENDING" as const,
+  };
+  const [totalPending, rows] = await Promise.all([
+    db.paymentClaim.count({ where }),
+    db.paymentClaim.findMany({
+      where,
+      orderBy: { createdAt: "asc" },
+      take: PENDING_CLAIMS_QUEUE_LIMIT,
+      include: CLAIM_REVIEW_INCLUDE,
+    }),
+  ]);
   const membershipIds = [...new Set(rows.map((row) => row.membershipId))];
   const sums = await sumConfirmedPaymentsByMembership(
     scope.organizationId,
     membershipIds,
   );
-  return rows.map((row) => {
+  const claims = rows.map((row) => {
     const membershipFeePaise = decimalToPaise(row.membership.fee);
     const paidPaise = sums.get(row.membershipId) ?? 0;
     const { outstandingPaise } = deriveMembershipPayments(
@@ -611,18 +634,29 @@ export async function listPendingClaimsForReview(
       outstandingPaise,
     };
   });
+  return { claims, totalPending };
+}
+
+/** One member's claim history: the displayed records plus a truncation flag. */
+export interface ClaimsForMember {
+  /** Newest first, at most CLAIM_HISTORY_LIMIT entries. */
+  items: PaymentClaimView[];
+  /** True when older claims exist beyond the displayed records. */
+  truncated: boolean;
 }
 
 /**
- * One member's claim history for staff (all statuses, newest first).
- * The member is re-verified inside the actor's scoped organization;
- * a foreign or nonexistent member produces the same not-found error,
- * so the read is not an oracle for other gyms' rosters.
+ * One member's claim history for staff (all statuses, newest first),
+ * bounded at the database to CLAIM_HISTORY_LIMIT with a one-row
+ * probe detecting truncation. The member is re-verified inside the
+ * actor's scoped organization; a foreign or nonexistent member
+ * produces the same not-found error, so the read is not an oracle
+ * for other gyms' rosters.
  */
 export async function listClaimsForMember(
   staffUserId: string,
   memberId: string,
-): Promise<PaymentClaimView[]> {
+): Promise<ClaimsForMember> {
   const scope = await requireVerifyScope(staffUserId);
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -634,9 +668,13 @@ export async function listClaimsForMember(
   const rows = await db.paymentClaim.findMany({
     where: { organizationId: scope.organizationId, memberId: member.id },
     orderBy: { createdAt: "desc" },
+    take: CLAIM_HISTORY_LIMIT + 1,
     include: CLAIM_INCLUDE,
   });
-  return rows.map(toClaimView);
+  return {
+    items: rows.slice(0, CLAIM_HISTORY_LIMIT).map(toClaimView),
+    truncated: rows.length > CLAIM_HISTORY_LIMIT,
+  };
 }
 
 async function findClaimInScope(organizationId: string, claimId: string) {

@@ -296,19 +296,41 @@ export interface PaymentReversalHistoryItem {
 }
 
 /**
- * Confirmed payment history for one membership, newest first. Tenant
- * scope is the caller's: `organizationId` must already be resolved
- * server-side (this helper performs no authorization of its own).
+ * Display bound for one membership's payment and reversal histories
+ * (M1): newest first, matching the member-facing claim history's
+ * bound. Paid/outstanding totals never derive from these lists —
+ * they come from sumConfirmedPaymentsByMembership's aggregates — so
+ * the bound limits rendering only, never the money math.
+ */
+export const PAYMENT_HISTORY_LIMIT = 50;
+
+/** A bounded history read: the displayed records plus a truncation flag. */
+export interface PaymentHistory {
+  /** Newest first, at most PAYMENT_HISTORY_LIMIT entries. */
+  items: PaymentHistoryItem[];
+  /** True when older payments exist beyond the displayed records. */
+  truncated: boolean;
+}
+
+/**
+ * Confirmed payment history for one membership, newest first,
+ * bounded at the database to PAYMENT_HISTORY_LIMIT with a one-row
+ * probe detecting truncation. Tenant scope is the caller's:
+ * `organizationId` must already be resolved server-side (this
+ * helper performs no authorization of its own).
  */
 export async function listPaymentsForMembership(
   organizationId: string,
   membershipId: string,
-): Promise<PaymentHistoryItem[]> {
-  const payments = await db.payment.findMany({
+): Promise<PaymentHistory> {
+  const rows = await db.payment.findMany({
     where: { organizationId, membershipId },
     orderBy: { confirmedAt: "desc" },
+    take: PAYMENT_HISTORY_LIMIT + 1,
   });
-  if (payments.length === 0) return [];
+  const payments = rows.slice(0, PAYMENT_HISTORY_LIMIT);
+  const truncated = rows.length > PAYMENT_HISTORY_LIMIT;
+  if (payments.length === 0) return { items: [], truncated: false };
 
   // Reversal totals per payment, so each receipt can show how much of
   // it has been reversed and how much can still be reversed.
@@ -333,36 +355,51 @@ export async function listPaymentsForMembership(
   });
   const roleByUserId = new Map(confirmerMemberships.map((m) => [m.userId, m.role]));
 
-  return payments.map((payment) => {
-    const amountPaise = decimalToPaise(payment.amount);
-    const reversedPaise = reversedByPaymentId.get(payment.id) ?? 0;
-    return {
-      id: payment.id,
-      amountPaise,
-      paymentMethod: payment.paymentMethod,
-      reference: payment.reference,
-      confirmedAt: payment.confirmedAt.toISOString(),
-      confirmedByRole: roleByUserId.get(payment.confirmedBy) ?? null,
-      reversedPaise,
-      remainingReversiblePaise: amountPaise - reversedPaise,
-    };
-  });
+  return {
+    items: payments.map((payment) => {
+      const amountPaise = decimalToPaise(payment.amount);
+      const reversedPaise = reversedByPaymentId.get(payment.id) ?? 0;
+      return {
+        id: payment.id,
+        amountPaise,
+        paymentMethod: payment.paymentMethod,
+        reference: payment.reference,
+        confirmedAt: payment.confirmedAt.toISOString(),
+        confirmedByRole: roleByUserId.get(payment.confirmedBy) ?? null,
+        reversedPaise,
+        remainingReversiblePaise: amountPaise - reversedPaise,
+      };
+    }),
+    truncated,
+  };
+}
+
+/** A bounded reversal-history read, mirroring PaymentHistory. */
+export interface ReversalHistory {
+  /** Newest first, at most PAYMENT_HISTORY_LIMIT entries. */
+  items: PaymentReversalHistoryItem[];
+  /** True when older reversals exist beyond the displayed records. */
+  truncated: boolean;
 }
 
 /**
  * Reversal history for one membership, newest first — the correction
- * entries that net against listPaymentsForMembership's receipts. Tenant
- * scope is the caller's, exactly as for the payment history helper.
+ * entries that net against listPaymentsForMembership's receipts —
+ * bounded exactly like the payment history above. Tenant scope is
+ * the caller's, exactly as for the payment history helper.
  */
 export async function listReversalsForMembership(
   organizationId: string,
   membershipId: string,
-): Promise<PaymentReversalHistoryItem[]> {
-  const reversals = await db.paymentReversal.findMany({
+): Promise<ReversalHistory> {
+  const rows = await db.paymentReversal.findMany({
     where: { organizationId, membershipId },
     orderBy: { createdAt: "desc" },
+    take: PAYMENT_HISTORY_LIMIT + 1,
   });
-  if (reversals.length === 0) return [];
+  const reversals = rows.slice(0, PAYMENT_HISTORY_LIMIT);
+  const truncated = rows.length > PAYMENT_HISTORY_LIMIT;
+  if (reversals.length === 0) return { items: [], truncated: false };
 
   // Resolve who reversed each payment to their role in this
   // organization (same convention as the payment history above).
@@ -373,15 +410,18 @@ export async function listReversalsForMembership(
   });
   const roleByUserId = new Map(reverserMemberships.map((m) => [m.userId, m.role]));
 
-  return reversals.map((reversal) => ({
-    id: reversal.id,
-    paymentId: reversal.paymentId,
-    amountPaise: decimalToPaise(reversal.amount),
-    reason: reversal.reason,
-    explanation: reversal.explanation,
-    reversedAt: reversal.createdAt.toISOString(),
-    reversedByRole: roleByUserId.get(reversal.reversedBy) ?? null,
-  }));
+  return {
+    items: reversals.map((reversal) => ({
+      id: reversal.id,
+      paymentId: reversal.paymentId,
+      amountPaise: decimalToPaise(reversal.amount),
+      reason: reversal.reason,
+      explanation: reversal.explanation,
+      reversedAt: reversal.createdAt.toISOString(),
+      reversedByRole: roleByUserId.get(reversal.reversedBy) ?? null,
+    })),
+    truncated,
+  };
 }
 
 interface RecordedPaymentRow {

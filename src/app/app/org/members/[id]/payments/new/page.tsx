@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import { getMemberDetail, getMemberPermissions } from "@/lib/server/members";
 import { formatInr } from "@/lib/members";
 
@@ -19,7 +19,7 @@ export default async function RecordPaymentPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user, membership } = await requireOrganizationContext();
+  const { user, membership } = await requireEntitledOrganizationContext();
   if (!getMemberPermissions(membership.role).canRecordPayment) {
     redirect("/app/org/members");
   }

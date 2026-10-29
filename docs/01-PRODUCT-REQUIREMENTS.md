@@ -391,6 +391,35 @@ SaaS access/subscription is manually enabled or extended.
 
 Razorpay is not part of V1.
 
+Implemented (trial/subscription slice, branch
+`feature/saas-trial-subscriptions`; see
+`docs/features/saas-trial-subscriptions.md`):
+
+- A first eligible gym creation grants one automatic seven-day trial
+  (server-generated UTC `trialStartedAt`/`trialEndsAt`). A trial is
+  live only while `now < trialEndsAt`. V1 owner phone entry is
+  India-only: the onboarding field takes exactly 10 digits (`+91`
+  displayed separately) and the backend grants a trial only when the
+  entered number matches a number Clerk reports as verified on the
+  owner's account.
+- One introductory trial per stable Clerk owner identity AND per
+  canonical E.164 verified owner phone number, enforced by database
+  unique constraints on a permanent claim ledger. A further gym for
+  the same owner or phone starts in `PENDING_PAYMENT`.
+- Effective states are derived at request time: `SUSPENDED` overrides
+  a live trial or paid period, then `ACTIVE`, then `TRIAL_ACTIVE`,
+  then `EXPIRED`, else `PENDING_PAYMENT`. Expiry needs no scheduled
+  job. Restricted gyms keep sign-in and the subscription screen; all
+  normal operations are blocked server-side.
+- The platform administrator (server-side Clerk-ID allowlist
+  `PLATFORM_ADMIN_CLERK_USER_IDS`, fail closed) manages trials,
+  verified payments, suspension, reactivation, extensions, and
+  5%/10% discount offers. Every admin mutation is transactional and
+  audited. No subscription price is invented: agreed amounts and
+  periods are administrator-entered when known.
+- The final-48-hour offer prompt appears only during a live trial's
+  last 48 hours, and the offer request is for manual review only.
+
 14.2 Member → Gym
 
 The member pays the gym directly.

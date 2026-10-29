@@ -39,6 +39,7 @@ const SUITES = [
   "src/lib/server/__tests__/member-otp-join-intent-db.test.ts",
   "src/lib/server/__tests__/payments-idempotency.test.ts",
   "src/lib/server/__tests__/payments-reversal-db.test.ts",
+  "src/lib/server/__tests__/saas-trial-db.test.ts",
   "src/lib/server/__tests__/db-pool-config.test.ts",
   ...process.argv.slice(2),
 ];

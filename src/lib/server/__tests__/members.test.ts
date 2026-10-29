@@ -33,6 +33,7 @@ const {
 
 vi.mock("@/lib/server/db", () => ({
   db: {
+    organizationSubscription: { findUnique: vi.fn(async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) })) },
     organizationMembership: {
       findFirst: mockOrgMembershipFindFirst,
       findMany: mockOrgMembershipFindMany,
@@ -105,6 +106,7 @@ function mockSuccessfulCreate() {
   mockMembershipCreate.mockResolvedValue({ id: "membership-id" });
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
+      organizationSubscription: { findUnique: async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) }) },
       // The member-decision advisory lock is a no-op in this mock:
       // these tests pin validation/authorization behaviour, and the
       // lock's serialization is covered on a real database.

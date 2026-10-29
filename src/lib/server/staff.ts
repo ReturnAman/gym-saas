@@ -10,6 +10,10 @@ import {
 } from "./audit";
 import { getPrimaryMembership } from "./authorization";
 import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
+import {
   ClerkDirectoryUnavailableError,
   findClerkUserByVerifiedEmail,
 } from "./clerk-directory";
@@ -414,6 +418,7 @@ export async function addOrganizationStaff(
   const scope = await resolveScope(userId);
   const permissions = requireManager(scope);
   validateAssignableRole(input.role, permissions);
+  await assertOperationsAllowed(scope.organizationId);
   const candidate = await resolveCandidate(input.email);
   if (candidate.userId === scope.userId) {
     throw new StaffAuthorizationError(
@@ -424,6 +429,7 @@ export async function addOrganizationStaff(
     return await db.$transaction(async (tx) => {
       const freshPermissions = await revalidateActorInTransaction(tx, scope);
       validateAssignableRole(input.role, freshPermissions);
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
       const created = await tx.organizationMembership.create({
         data: {
           userId: candidate.userId,
@@ -472,9 +478,11 @@ export async function changeOrganizationStaffRole(
   const scope = await resolveScope(userId);
   const permissions = requireManager(scope);
   validateAssignableRole(input.role, permissions);
+  await assertOperationsAllowed(scope.organizationId);
   return db.$transaction(async (tx) => {
     const freshPermissions = await revalidateActorInTransaction(tx, scope);
     validateAssignableRole(input.role, freshPermissions);
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const target = await tx.organizationMembership.findFirst({
       where: { id: input.membershipId, organizationId: scope.organizationId },
     });
@@ -529,8 +537,10 @@ export async function revokeOrganizationStaffAccess(
 ): Promise<OrganizationMembership> {
   const scope = await resolveScope(userId);
   requireManager(scope);
+  await assertOperationsAllowed(scope.organizationId);
   return db.$transaction(async (tx) => {
     const freshPermissions = await revalidateActorInTransaction(tx, scope);
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const target = await tx.organizationMembership.findFirst({
       where: { id: input.membershipId, organizationId: scope.organizationId },
     });

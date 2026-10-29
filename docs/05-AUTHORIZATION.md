@@ -932,3 +932,34 @@ This document establishes the initial authorization model for V1.
 Detailed implementation must preserve the tenant isolation, role, permission, resource-scope, and entitlement boundaries defined here.
 
 No authorization-sensitive production implementation should begin until the relevant security decisions have been sufficiently documented and reviewed.
+
+# 4. SaaS trial/subscription authorization (implemented, branch `feature/saas-trial-subscriptions`)
+
+See `docs/features/saas-trial-subscriptions.md` for the full record.
+
+- **Entitlement is a server-side authorization layer, not UI hiding.**
+  `src/lib/server/subscriptions.ts` resolves the effective state
+  (`SUSPENDED` overrides a live trial/paid period, then `ACTIVE`,
+  `TRIAL_ACTIVE`, `EXPIRED`, else `PENDING_PAYMENT`) from the
+  subscription row and the request clock at request time; expiry
+  needs no scheduled job. Owner/staff pages use
+  `requireEntitledOrganizationContext`, member pages use
+  `requireEntitledMemberContext`, and mutation services assert
+  entitlement before and inside their transactions. Restricted gyms
+  keep sign-in and the subscription recovery screen only.
+- **Platform administration is a separate identity, not a gym role.**
+  `PLATFORM_ADMIN_CLERK_USER_IDS` (server-side, comma-separated
+  stable Clerk IDs) is the sole allowlist for `/platform-admin`
+  pages and actions; a missing, empty, or invalid value admits
+  nobody, and `OWNER`/`ADMIN`/`STAFF` membership grants nothing.
+  Every admin mutation is validated, runs in one transaction with
+  its audit event, and is scoped to an explicitly validated
+  organization ID.
+- **Trial eligibility is a database constraint, not a check.**
+  One introductory trial per stable Clerk owner identity and per
+  canonical verified phone number is enforced by unique constraints
+  on `saas_trial_claims` plus advisory-lock serialization and a
+  transactional claim during organization creation. Verified phones
+  come only from Clerk's Backend API; browser-supplied numbers and
+  `verified` flags are never trusted, and full phone numbers never
+  appear in logs or audit metadata.

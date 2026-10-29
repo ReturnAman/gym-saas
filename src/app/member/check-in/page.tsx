@@ -1,6 +1,13 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { resolveCheckInLanding } from "@/lib/server/member-check-in";
+import { getMemberContext } from "@/lib/server/member-session";
+import {
+  getOrganizationSubscription,
+  isOperationsState,
+  resolveEffectiveState,
+} from "@/lib/server/subscriptions";
 
 import { CheckInButton } from "./check-in-button";
 
@@ -36,6 +43,26 @@ export default async function MemberCheckInPage({
   const params = await searchParams;
   const gymId = params.gym?.trim() ? params.gym.trim() : null;
   const state = await resolveCheckInLanding(gymId);
+
+  // Entitlement gate for the actionable branches only: signed-out,
+  // mismatch and no-gym states must keep rendering (they are the
+  // recovery paths), while a session that could actually check in at a
+  // restricted gym is sent to the restricted notice. The check-in API
+  // itself is gated independently, so this is presentation, not the
+  // security boundary.
+  if (state.kind === "ready" || state.kind === "checked_in") {
+    const context = await getMemberContext();
+    if (context) {
+      const subscription = await getOrganizationSubscription(
+        context.organization.id,
+      );
+      if (
+        !isOperationsState(resolveEffectiveState(subscription, new Date()))
+      ) {
+        redirect("/member/restricted");
+      }
+    }
+  }
 
   switch (state.kind) {
     case "signed_out":

@@ -7,7 +7,7 @@ import {
   formatKolkataDateTime,
   formatKolkataTime,
 } from "@/lib/attendance";
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   getAttendancePermissions,
   getOpenSession,
@@ -112,7 +112,7 @@ export default async function MemberDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user, membership: orgMembership } = await requireOrganizationContext();
+  const { user, membership: orgMembership } = await requireEntitledOrganizationContext();
   const { id } = await params;
   const detail = await getMemberDetail(user.id, id);
   if (!detail) {

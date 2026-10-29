@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import { getMemberDetail, getMemberPermissions } from "@/lib/server/members";
 
 import { EditMemberForm } from "./edit-form";
@@ -13,7 +13,7 @@ export default async function EditMemberPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user, membership } = await requireOrganizationContext();
+  const { user, membership } = await requireEntitledOrganizationContext();
   if (!getMemberPermissions(membership.role).canEdit) {
     redirect("/app/org/members");
   }

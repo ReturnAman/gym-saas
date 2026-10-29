@@ -375,6 +375,107 @@ on staging, and hosting/provisioning, production Clerk, live
 2Factor verification, and a tested backup/restore all remain
 outstanding.
 
+## 4.11 SaaS trial & manual subscriptions (implemented on branch `feature/saas-trial-subscriptions`, not yet released or deployed)
+
+Implemented end to end on top of `main` at `9515714` (plus the
+M1 bounded-list hardening, committed as `3e2267e` on the same branch,
+preserved untouched):
+
+- **Schema + migration `20261025125054_add_saas_subscriptions`:**
+  `organization_subscriptions` (1:1 trial/paid/suspension state),
+  `saas_trial_claims` (permanent ledger; global uniques on stable
+  Clerk owner ID and canonical E.164 verified phone; organization link
+  `Restrict`), `saas_subscription_payments` (append-only, exact
+  `DECIMAL(12,2)`, per-org idempotency key), `saas_offer_requests`
+  (`REQUESTED/APPROVED/DECLINED/ACCEPTED`, 5%/10% only on approval,
+  partial unique index: one pending request per gym). Audit reuse:
+  existing `audit_logs` with `SAAS_*` events, phone values masked.
+- **Trial claim** (`createOrganizationWithSubscription`, onboarding
+  action): verified phones come from Clerk's Backend API
+  (verification status exactly `verified`, never browser input),
+  canonicalized to E.164 (`src/lib/saas-phone.ts`; bare 10-digit
+  numbers default to India, other countries must arrive with `+`).
+  Claim attempts serialize on advisory locks (owner, then phones in
+  sorted order); a P2002 backstop retries creation once, trial-less.
+  No verified phone → gym created in `PENDING_PAYMENT`; Clerk lookup
+  outage → creation aborts (retryable), never silently trial-less.
+- **Entitlement** (`src/lib/server/subscriptions.ts`): effective state
+  derived at request time (suspension override → paid → trial →
+  expired → pending; live only while `now < endsAt`, exact-expiry
+  tested). Owner/staff pages use
+  `requireEntitledOrganizationContext` (restricted → `/app/subscription`),
+  member pages use `requireEntitledMemberContext` (restricted →
+  `/member/restricted`), mutations assert before and inside their
+  transactions, and member API routes return 403
+  `SUBSCRIPTION_RESTRICTED`. The subscription screen itself is ungated
+  so restricted owners can always reach it.
+- **Platform admin** (`/platform-admin`, allowlist
+  `PLATFORM_ADMIN_CLERK_USER_IDS`, comma-separated Clerk IDs,
+  fail closed; gym roles grant nothing): live metrics + searchable org
+  list, detail page with payment/suspend/extend/reactivate/offer
+  actions, all validated, transactional, and audited. Recording a
+  payment does not clear a suspension; reactivation without a live
+  entitlement requires a paid period in the same call.
+- **Owner UI:** trial banner + final-48-hour offer prompt on the org
+  home (prompt only while live, ≤48h remain, no pending/approved
+  offer, not dismissed), full status/offer/payment view on
+  `/app/subscription`. No price, support contact, or payment link is
+  invented anywhere.
+- **Tests:** unit coverage for phone canonicalization, resolver
+  boundaries, allowlist/validators, payment idempotency (including
+  reactivation tokens), and subscription-page integrity, plus a
+  24-test real-PostgreSQL suite (`saas-trial-db.test.ts`,
+  registered in `scripts/run-db-tests.mjs`) covering
+  one-trial-per-owner/phone, formatting collision, concurrent claims,
+  Restrict permanence, entitlement states, payment atomicity with
+  member-payment isolation, suspend/reactivate (including replay,
+  conflicting-payload, cross-gym, stale, and concurrent-submission
+  cases), suspended-offer rejection, and offer
+  idempotency/window/percentage rules.
+  Existing DB suites' fixtures seed a live-trial subscription row to
+  mirror onboarding (their intent unchanged); existing page-coherence
+  tests were updated to the entitled context wrappers (strictly
+  stronger: session + entitlement).
+- **Not done / still gated:** nothing here is pushed, deployed, or
+  released. No payment gateway, pricing, support channel, or
+  production Clerk instance is implied. The platform-admin allowlist
+  must be set in the deployment environment before `/platform-admin`
+  admits anyone.
+- **India-only owner phone entry (2026-10-25, same branch):** onboarding now collects exactly 10 digits with a
+  separately displayed `+91` prefix. Strict server parsing
+  (`parseIndianMobileInput`, `/^[6-9][0-9]{9}$/`) rejects
+  country-code, leading-zero, first digits 0–5, spaced, punctuated,
+  short, long, alphabetic, and non-ASCII input
+  without truncation; the entered number must match a canonicalized
+  verified Clerk number (`findMatchingVerifiedPhone`) or the gym is
+  created in `PENDING_PAYMENT` with an explanatory notice. The
+  `saas_trial_claims` uniques, advisory locks, and claim path are
+  untouched; the lenient Clerk-value canonicalizer is unchanged. E2E
+  auth setup fills the field from `CLERK_E2E_OWNER_PHONE`, which must
+  match a verified number on the fixture account (unverifiable here:
+  no live Clerk instance).
+- **Final validation (2026-10-25, this branch, disposable local DB):**
+  Prisma schema valid; lint 0 errors (1 pre-existing k6 warning);
+  typecheck exit 0; unit suite 816 passed / 120 skipped; full
+  `test:db` 164 passed / 0 skipped (SaaS suite 16/16); production
+  build exit 0, 31 routes including `/platform-admin`,
+  `/app/subscription`, `/member/restricted` (placeholder Clerk keys
+  for page-data collection only). Two review caveats found during
+  this pass were fixed before validation: dashboard headline metrics
+  are now global rather than search-filtered, and the payment form
+  carries one idempotency token per render so a double submit replays
+  instead of recording twice. One disclosure: the generated migration
+  also renames a pre-existing member-OTP index to Prisma's
+  conventional name (pure rename, no data effect); it is kept so the
+  migration matches what was applied to the disposable test DBs.
+- **Final validation (2026-10-29, this branch, disposable local DB):**
+  Prisma schema valid; lint 0 errors (1 pre-existing k6 warning);
+  typecheck exit 0; unit suite 829 passed / 128 skipped; full
+  `test:db` 172 passed / 0 skipped (SaaS suite 24/24, including the
+  suspended-offer, payment-idempotency, reactivation-replay, and
+  cross-gym concurrency cases); production build exit 0, 31 routes
+  (placeholder Clerk keys for page-data collection only).
+
 # 5. Data
 
 Twelve migrations, all covered by CI: run `39115484351` on

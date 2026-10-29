@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   PENDING_CLAIMS_QUEUE_LIMIT,
   PaymentClaimAuthorizationError,
@@ -16,7 +16,7 @@ import styles from "./payment-claims.module.css";
  * Staff payment claim review for the actor's gym.
  *
  * Requires authentication AND organization membership (via
- * requireOrganizationContext). The organization is the actor's primary
+ * requireEntitledOrganizationContext). The organization is the actor's primary
  * gym — the same server-side resolution every org page uses; there is
  * no gym switcher yet, and the header says so while naming the gym
  * prominently. Reviewing is OWNER / ADMIN / STAFF (the service
@@ -44,7 +44,7 @@ function toRow(claim: PendingClaimReviewView): ClaimReviewRow {
 
 export default async function PaymentClaimsPage() {
   const { user, membership, organization } =
-    await requireOrganizationContext();
+    await requireEntitledOrganizationContext();
 
   const header = (
     <header className={styles.header}>

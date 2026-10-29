@@ -163,6 +163,12 @@ model Organization {
   memberJoinRequests MemberJoinRequest[]
   paymentReversals    PaymentReversal[]
 
+  // SaaS subscription domain (trial/subscription slice).
+  subscription  OrganizationSubscription?
+  trialClaims   SaasTrialClaim[]
+  saasPayments  SaasSubscriptionPayment[]
+  saasOffers    SaasOfferRequest[]
+
   @@map("organizations")
 }
 
@@ -735,4 +741,149 @@ model MemberJoinRequest {
   @@unique([organizationId, id])
   @@index([organizationId, status, createdAt])
   @@map("member_join_requests")
+}
+
+// ---------------------------------------------------------------------------
+// SaaS trial & manual subscriptions (trial/subscription slice).
+// ---------------------------------------------------------------------------
+// These models are the SaaS operator's own subscription domain — money
+// the gym pays Gym SaaS for the platform — and are deliberately separate
+// from the gym-member Payment model (money members pay their gym). A SaaS
+// subscription payment never touches a member's balance or membership
+// dates, and a member payment never extends a SaaS entitlement.
+//
+// Entitlement is DERIVED at request time (see
+// src/lib/server/subscriptions.ts): suspension overrides everything,
+// then a live paid period, then a live trial; an organization that had
+// an entitlement which has now lapsed is EXPIRED, and one that never
+// had any is PENDING_PAYMENT. No scheduled job is required for
+// expiration to be secure — the resolver reads persisted timestamps on
+// every check.
+//
+// Trial claims are permanent: SaasTrialClaim rows are append-only and
+// their organization link is Restrict, so deleting a gym, expiring a
+// trial, or changing a phone number can never release a claimed trial.
+// One introductory trial per stable Clerk owner identity AND per
+// canonical verified phone number, each enforced by a database unique
+// constraint (the application-level advisory locks in the claim flow
+// serialize concurrent attempts; the constraints are the backstop).
+enum SaasOfferStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+  ACCEPTED
+}
+
+model OrganizationSubscription {
+  id             String   @id @default(uuid())
+  organizationId String   @unique @map("organization_id")
+  // Trial window, set only when an introductory trial was granted.
+  trialStartedAt DateTime? @map("trial_started_at") @db.Timestamptz(6)
+  trialEndsAt    DateTime? @map("trial_ends_at") @db.Timestamptz(6)
+  // Paid window. paidThroughAt always mirrors paidPeriodEndAt on
+  // activation; the resolver reads paidThroughAt only.
+  paidPeriodStartAt DateTime? @map("paid_period_start_at") @db.Timestamptz(6)
+  paidPeriodEndAt   DateTime? @map("paid_period_end_at") @db.Timestamptz(6)
+  paidThroughAt     DateTime? @map("paid_through_at") @db.Timestamptz(6)
+  // Suspension overrides any live trial or paid period. Cleared only by
+  // an explicit platform-admin reactivation (see platform-admin.ts).
+  suspendedAt          DateTime? @map("suspended_at") @db.Timestamptz(6)
+  suspendedByClerkUserId String? @map("suspended_by_clerk_user_id")
+  suspensionReason     String?   @map("suspension_reason")
+  // The owner dismissed the final-48-hour offer prompt for this gym.
+  // Dismissal hides the prompt; it never grants, denies, or deletes an
+  // offer request.
+  offerPromptDismissedAt DateTime? @map("offer_prompt_dismissed_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  saasPayments SaasSubscriptionPayment[]
+
+  @@map("organization_subscriptions")
+}
+
+// Permanent introductory-trial claim ledger. clerkUserId is the stable
+// Clerk identity (not an app-User foreign key: deleting an application
+// User row must never release a claim), and canonicalPhone is the
+// E.164-normalized verified owner phone. Both uniques are global —
+// never scoped to an organization — so neither a new account nor a new
+// gym can claim a second introductory trial for the same owner or phone.
+// Append-only: there is deliberately no updated_at.
+model SaasTrialClaim {
+  id             String   @id @default(uuid())
+  clerkUserId    String   @unique @map("clerk_user_id")
+  canonicalPhone String   @unique @map("canonical_phone")
+  organizationId String   @map("organization_id")
+  claimedAt      DateTime @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Restrict: a gym whose trial was claimed cannot be deleted out from
+  // under its claim, so the claim can never be recycled.
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@map("saas_trial_claims")
+}
+
+// Manually verified SaaS subscription payments. Append-only financial
+// history: no edit or delete path, corrections use new records. The
+// recording administrator is a Clerk user ID (platform admin), not a gym
+// role — gym staff must never record SaaS revenue.
+model SaasSubscriptionPayment {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  subscriptionId String   @map("subscription_id")
+  amount         Decimal  @db.Decimal(12, 2)
+  receivedAt     DateTime @map("received_at") @db.Timestamptz(6)
+  // Optional free-text reference (e.g. a UPI transaction id) — recorded
+  // when the operator has one; never required.
+  reference      String?
+  periodStartAt  DateTime @map("period_start_at") @db.Timestamptz(6)
+  periodEndAt    DateTime @map("period_end_at") @db.Timestamptz(6)
+  recordedByClerkUserId String @map("recorded_by_clerk_user_id")
+  notes          String?
+  // Client-generated idempotency token for the admin form, unique per
+  // organization (same H4 pattern as gym-member payments): a retried
+  // submission resolves to this row instead of a second payment.
+  idempotencyKey String?  @map("idempotency_key")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  subscription OrganizationSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId])
+  @@map("saas_subscription_payments")
+}
+
+// Discount-offer requests and decisions. Only the platform admin may
+// approve, and only 5% or 10% (enforced in the service layer; the
+// database stores the approved value). A duplicate PENDING request for
+// one gym is impossible by a partial unique index declared only in the
+// migration (Prisma cannot express it):
+//   saas_offer_requests_one_pending_per_org, WHERE status = 'REQUESTED',
+//   over (organization_id).
+// Agreed amount and period are administrator-entered when known — no
+// subscription price is invented anywhere in this feature.
+model SaasOfferRequest {
+  id             String         @id @default(uuid())
+  organizationId String         @map("organization_id")
+  status         SaasOfferStatus @default(REQUESTED)
+  requestedAt    DateTime       @default(now()) @map("requested_at") @db.Timestamptz(6)
+  discountPercent Int?          @map("discount_percent")
+  offerExpiresAt DateTime?      @map("offer_expires_at") @db.Timestamptz(6)
+  applicablePeriodStartAt DateTime? @map("applicable_period_start_at") @db.Timestamptz(6)
+  applicablePeriodEndAt   DateTime? @map("applicable_period_end_at") @db.Timestamptz(6)
+  agreedAmount   Decimal?       @map("agreed_amount") @db.Decimal(12, 2)
+  decidedByClerkUserId String?  @map("decided_by_clerk_user_id")
+  decidedAt      DateTime?      @map("decided_at") @db.Timestamptz(6)
+  acceptedAt     DateTime?      @map("accepted_at") @db.Timestamptz(6)
+  notes          String?
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@map("saas_offer_requests")
 }

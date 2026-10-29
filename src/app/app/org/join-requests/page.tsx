@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   MemberJoinRequestAuthorizationError,
   canViewJoinRequests,
@@ -18,7 +18,7 @@ import styles from "./join-requests.module.css";
  * Pending members — the join-request queue for the actor's gym.
  *
  * Requires authentication AND organization membership (via
- * requireOrganizationContext). The organization is the actor's primary
+ * requireEntitledOrganizationContext). The organization is the actor's primary
  * gym — the same server-side resolution every org page uses. Viewing
  * is OWNER / ADMIN / STAFF (the service enforces the same rule on the
  * read and on every decision); other roles get a no-access state
@@ -44,7 +44,7 @@ function toRow(request: MemberJoinRequestView): JoinRequestRow {
 }
 export default async function JoinRequestsPage() {
   const { user, membership, organization } =
-    await requireOrganizationContext();
+    await requireEntitledOrganizationContext();
 
   const header = (
     <header className={styles.header}>

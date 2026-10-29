@@ -1,4 +1,5 @@
-import { hasRole, requireOrganizationContext } from "@/lib/server/authorization";
+import { hasRole } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 
 import { ProfileForm } from "./profile-form";
 import styles from "./settings.module.css";
@@ -12,7 +13,7 @@ import styles from "./settings.module.css";
  * enforces OWNER access regardless.
  */
 export default async function SettingsPage() {
-  const { organization, membership } = await requireOrganizationContext();
+  const { organization, membership } = await requireEntitledOrganizationContext();
   const isOwner = hasRole(membership, "OWNER");
 
   return (

@@ -18,6 +18,10 @@ import {
   writeAuditEvent,
 } from "./audit";
 import { getPrimaryMembership } from "./authorization";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 import { db } from "./db";
 import { LINKING_WINDOW_MS } from "./member-linking";
 
@@ -267,6 +271,10 @@ export async function submitJoinRequest(
 ): Promise<SubmitJoinRequestResult> {
   const validated = validateJoinRequestInput(input);
   const { organizationId, challengeId } = input;
+  // SaaS entitlement, checked BEFORE the OTP challenge is claimed: a
+  // join request to a restricted gym must not consume the caller's
+  // verified challenge, and staff could not act on it anyway.
+  await assertOperationsAllowed(organizationId);
   const now = new Date();
   const windowStart = new Date(now.getTime() - LINKING_WINDOW_MS);
   // Set from the claimed challenge inside the transaction; the catch
@@ -808,6 +816,7 @@ export async function approveJoinRequest(
     return await db.$transaction(async (tx) => {
       const request = await loadRequestForDecision(tx, requestId);
       const { organizationId } = request;
+      await assertOperationsAllowedInTransaction(tx, organizationId);
 
       // 1. Revalidate the decider under lock before any mutation.
       await revalidateDeciderInTransaction(tx, actorUserId, organizationId);
@@ -992,6 +1001,7 @@ export async function rejectJoinRequest(
   await db.$transaction(async (tx) => {
     const request = await loadRequestForDecision(tx, requestId);
     const { organizationId } = request;
+    await assertOperationsAllowedInTransaction(tx, organizationId);
 
     // Same revalidation and lock order as approval, so the two
     // decisions linearize against each other.

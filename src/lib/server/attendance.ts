@@ -16,6 +16,10 @@ import {
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
 import type { MemberSessionContext } from "./member-session";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 
 /**
  * Server-side Attendance service (Attendance V1 — Slice 1: staff manual
@@ -422,6 +426,7 @@ export async function checkInMember(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -472,6 +477,9 @@ export async function checkInSelf(
   if (!member) {
     throw new AttendanceNotFoundError();
   }
+  // SaaS entitlement: members of a restricted gym cannot check in, even
+  // by calling the check-in API directly.
+  await assertOperationsAllowed(context.session.organizationId);
 
   return createCheckInSession(
     {
@@ -512,6 +520,7 @@ export async function checkOutMember(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
   const now = opts.now ?? new Date();
 
   const session = await db.attendanceSession.findFirst({
@@ -532,6 +541,7 @@ export async function checkOutMember(
   // first, the claim matches nothing — this call then behaves exactly
   // like the idempotent path above (returns the session, no audit).
   const claimed = await db.$transaction(async (tx) => {
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const claim = await tx.attendanceSession.updateMany({
       where: {
         id: session.id,
@@ -590,9 +600,11 @@ export async function checkOutAllOpenSessions(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
   const now = opts.now ?? new Date();
 
   const closedCount = await db.$transaction(async (tx) => {
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const openSessions = await tx.attendanceSession.findMany({
       where: { organizationId: scope.organizationId, checkOutAt: null },
       select: { id: true, memberId: true },

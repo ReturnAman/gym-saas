@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   getMemberPermissions,
   listMembers,
@@ -70,7 +70,7 @@ export default async function MembersPage({
 }: {
   searchParams: Promise<MembersSearchParams>;
 }) {
-  const { user, membership } = await requireOrganizationContext();
+  const { user, membership } = await requireEntitledOrganizationContext();
   const permissions = getMemberPermissions(membership.role);
 
   const params = await searchParams;

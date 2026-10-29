@@ -16,6 +16,10 @@ import {
   type PaymentStatus,
 } from "../members";
 import { getPrimaryMembership } from "./authorization";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 import { isValidIdempotencyKey } from "../idempotency";
 import {
   AUDIT_EVENT_PAYMENT_CLAIM_CONFIRMED,
@@ -340,6 +344,9 @@ export async function submitPaymentClaim(
   if (!scope.userId || !scope.organizationId || !scope.memberId) {
     throw new PaymentClaimAuthorizationError("Authentication is required.");
   }
+  // SaaS entitlement: members of a restricted gym cannot submit claims,
+  // even by calling the claims API directly.
+  await assertOperationsAllowed(scope.organizationId);
   const validated = validatePaymentInput(input);
 
   const member = await db.member.findFirst({
@@ -365,6 +372,7 @@ export async function submitPaymentClaim(
 
   try {
     const claimId = await db.$transaction(async (tx) => {
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
       // Serialize submissions per membership: lock the membership row
       // so the pending count and duplicate check below cannot be raced
       // by a concurrent submission for the same membership.
@@ -747,6 +755,7 @@ export async function confirmPaymentClaim(
 ): Promise<{ claimId: string; paymentId: string; deduplicated?: boolean }> {
   const scope = await requireVerifyScope(staffUserId);
   const claim = await findClaimInScope(scope.organizationId, claimId);
+  await assertOperationsAllowed(scope.organizationId);
 
   const claimedAmountPaise = decimalToPaise(claim.claimedAmount);
   let confirmedAmountPaise = claimedAmountPaise;
@@ -785,6 +794,7 @@ export async function confirmPaymentClaim(
       // Revalidate the verifier under lock before any mutation: a
       // demoted/removed actor must not decide, even mid-request.
       await revalidateVerifierInTransaction(tx, scope);
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
       // Claim the decision atomically: only a still-PENDING claim
       // transitions, so two staff racing to decide cannot both win.
       const transition = await tx.paymentClaim.updateMany({
@@ -914,11 +924,13 @@ export async function rejectPaymentClaim(
 ): Promise<{ claimId: string }> {
   const scope = await requireVerifyScope(staffUserId);
   const claim = await findClaimInScope(scope.organizationId, claimId);
+  await assertOperationsAllowed(scope.organizationId);
   const now = new Date();
 
   await db.$transaction(async (tx) => {
     // Same in-transaction verifier revalidation as confirm.
     await revalidateVerifierInTransaction(tx, scope);
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const transition = await tx.paymentClaim.updateMany({
       where: {
         id: claim.id,

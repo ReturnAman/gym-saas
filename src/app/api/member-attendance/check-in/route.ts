@@ -23,6 +23,7 @@ import {
   getMemberContext,
   isSameOriginRequest,
 } from "@/lib/server/member-session";
+import { SubscriptionRestrictedError } from "@/lib/server/subscriptions";
 
 /**
  * POST /api/member-attendance/check-in — member self-check-in (QR flow).
@@ -121,6 +122,18 @@ export async function POST(request: Request) {
           },
         },
         { status: 400 },
+      );
+    }
+    if (error instanceof SubscriptionRestrictedError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "SUBSCRIPTION_RESTRICTED",
+            message:
+              "This gym's subscription is currently restricted. Please ask the gym for help.",
+          },
+        },
+        { status: 403 },
       );
     }
     if (classifyDatabaseError(error)) {

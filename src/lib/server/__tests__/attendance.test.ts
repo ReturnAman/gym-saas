@@ -33,6 +33,7 @@ const {
 
 vi.mock("@/lib/server/db", () => ({
   db: {
+    organizationSubscription: { findUnique: vi.fn(async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) })) },
     organizationMembership: {
       findFirst: mockOrgMembershipFindFirst,
       findMany: mockOrgMembershipFindMany,
@@ -121,6 +122,7 @@ beforeEach(() => {
   mockSessionCount.mockResolvedValue(0);
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
+      organizationSubscription: { findUnique: async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) }) },
       attendanceSession: {
         create: mockSessionCreate,
         update: mockSessionUpdate,

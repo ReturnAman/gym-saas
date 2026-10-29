@@ -5,7 +5,7 @@ import {
   formatKolkataDate,
   formatKolkataTime,
 } from "@/lib/attendance";
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   MAX_TODAY_SESSIONS,
   getAttendancePermissions,
@@ -25,7 +25,7 @@ import styles from "./attendance.module.css";
  * TRAINER views only.
  */
 export default async function AttendancePage() {
-  const { user, membership } = await requireOrganizationContext();
+  const { user, membership } = await requireEntitledOrganizationContext();
   const permissions = getAttendancePermissions(membership.role);
   const today = await listTodayAttendance(user.id);
   const sessions = today.sessions;

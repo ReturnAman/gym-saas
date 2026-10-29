@@ -19,6 +19,10 @@ import {
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
 import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
+import {
   canRecordPayment,
   canReversePayment,
   listPaymentsForMembership,
@@ -518,10 +522,16 @@ export async function createMemberWithMembership(
       "You do not have permission to add members.",
     );
   }
+  // SaaS entitlement: a restricted gym cannot add members, even by a
+  // direct server-action call that bypasses the gated pages.
+  await assertOperationsAllowed(scope.organizationId);
 
   const validated = validateMemberInput(input);
 
   const memberId = await db.$transaction(async (tx) => {
+    // Re-check entitlement inside the transaction: a gym suspended
+    // between the pre-check above and this write must not create.
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     // Serialize against join-request decisions for the same
     // (gym, phone): approval of a pending request scans the member
     // records for the phone and adopts/creates under this same lock
@@ -612,6 +622,7 @@ export async function updateMember(
       "You do not have permission to edit members.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },

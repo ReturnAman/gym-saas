@@ -115,6 +115,18 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       orgA = a.id;
       orgB = b.id;
       createdOrgIds.push(orgA, orgB);
+      // SaaS trial fixtures (see the other suites): the legacy
+      // createOrganization helper writes no subscription row, so give
+      // both gyms a live trial for the mutations under test.
+      for (const orgId of [orgA, orgB]) {
+        await db.organizationSubscription.create({
+          data: {
+            organizationId: orgId,
+            trialStartedAt: new Date(),
+            trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+          },
+        });
+      }
     });
 
     afterAll(async () => {

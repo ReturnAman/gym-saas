@@ -20,6 +20,10 @@ import {
   writeAuditEvent,
 } from "./audit";
 import { db } from "./db";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 
 /**
  * Server-side Payments service (04-DATABASE-DESIGN §14, §16, §17;
@@ -510,6 +514,7 @@ export async function recordPayment(
       "You do not have permission to record payments.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const validated = validatePaymentInput(input);
 
@@ -558,6 +563,7 @@ export async function recordPayment(
       // Revalidate the recorder under lock before any write: a
       // demoted/removed actor must not record, even mid-request.
       await revalidateRecorderInTransaction(tx, scope);
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
       const payment = await tx.payment.create({
         data: {
           organizationId: scope.organizationId,
@@ -714,6 +720,7 @@ export async function reversePayment(
       "You do not have permission to reverse payments.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const validated = validatePaymentReversalInput(input);
   const expectedPayload = {
@@ -744,6 +751,7 @@ export async function reversePayment(
       // Revalidate the reverser under lock before any write: a
       // demoted/removed actor must not reverse, even mid-request.
       await revalidateReverserInTransaction(tx, scope);
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
 
       const payment = await tx.payment.findFirst({
         where: { id: paymentId, organizationId: scope.organizationId },

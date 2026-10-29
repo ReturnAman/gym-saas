@@ -53,8 +53,8 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-vi.mock("@/lib/server/authorization", () => ({
-  requireOrganizationContext: mockRequireContext,
+vi.mock("@/lib/server/subscriptions", () => ({
+  requireEntitledOrganizationContext: mockRequireContext,
 }));
 
 vi.mock("@/lib/server/members", () => ({

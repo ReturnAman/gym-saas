@@ -86,6 +86,16 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         select: { id: true },
       });
       createdOrgIds.push(org.id);
+      // SaaS trial fixture: gyms created through onboarding carry a
+      // live trial subscription; direct seeds must too, or the
+      // entitlement guard (fail closed) blocks the mutations under test.
+      await db.organizationSubscription.create({
+        data: {
+          organizationId: org.id,
+          trialStartedAt: new Date(),
+          trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        },
+      });
       const owner = await db.user.create({
         data: { clerkUserId: `idem-owner-${tag}-${suffix}` },
         select: { id: true },

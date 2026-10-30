@@ -8,7 +8,9 @@ import {
   MemberAuthorizationError,
   MemberDuplicateError,
   MemberNotFoundError,
+  MemberRenewalConflictError,
   createMemberWithMembership,
+  renewMembership,
   updateMember,
   type DuplicateMember,
 } from "@/lib/server/members";
@@ -407,6 +409,110 @@ export async function reversePaymentAction(
     return {
       ok: false,
       message: "Could not reverse the payment. Please try again.",
+      errors: {},
+    };
+  }
+
+  revalidatePath("/app/org/members");
+  revalidatePath(`/app/org/members/${memberId}`);
+  redirect(`/app/org/members/${memberId}`);
+}
+
+export interface RenewalFormState {
+  ok: boolean;
+  message: string | null;
+  errors: Partial<Record<MemberField, string>>;
+}
+
+export const INITIAL_RENEWAL_FORM_STATE: RenewalFormState = {
+  ok: false,
+  message: null,
+  errors: {},
+};
+
+/**
+ * Renew-membership submit handler.
+ *
+ * Authentication is enforced by requireCurrentUser (redirects to
+ * sign-in); OWNER/ADMIN/STAFF authorization, tenant isolation, SaaS
+ * entitlement, chaining, and validation are enforced inside
+ * renewMembership, server-side. The member ID comes from a hidden
+ * field but is never trusted: the service re-verifies it against the
+ * caller's organization. The form's H4 idempotency token makes a
+ * double-click or a retry after a lost response resolve to the
+ * original renewal instead of creating a second period. On success
+ * the user returns to the member's page, which now shows the new
+ * period as current and the old one under Past memberships.
+ */
+export async function renewMembershipAction(
+  _prevState: RenewalFormState,
+  formData: FormData,
+): Promise<RenewalFormState> {
+  const user = await requireCurrentUser();
+  const memberId = String(formData.get("memberId") ?? "");
+
+  try {
+    await renewMembership(user.id, memberId, {
+      plan: String(formData.get("plan") ?? ""),
+      fee: String(formData.get("fee") ?? ""),
+      expiryDate: String(formData.get("expiryDate") ?? ""),
+      idempotencyKey: String(formData.get("idempotencyToken") ?? ""),
+    });
+  } catch (error) {
+    if (error instanceof MemberValidationError) {
+      const { form, ...fieldErrors } = error.errors;
+      return {
+        ok: false,
+        message: form ?? null,
+        errors: fieldErrors as Partial<Record<MemberField, string>>,
+      };
+    }
+    if (error instanceof MemberRenewalConflictError) {
+      return {
+        ok: false,
+        message:
+          "This renewal submission was already used with different details. Refresh the page and check the membership before renewing again.",
+        errors: {},
+      };
+    }
+    if (
+      error instanceof MemberAuthorizationError ||
+      error instanceof MemberNotFoundError
+    ) {
+      return { ok: false, message: error.message, errors: {} };
+    }
+    if (mayHaveCommitted(error)) {
+      logDatabaseFailure({ boundary: "action:renewMembership", error });
+      // The connection died around the write: the renewal may or may
+      // not exist — never invite a blind retry. Refresh the member's
+      // pages so the periods the staff member is sent to check are
+      // the persisted ones.
+      revalidatePath("/app/org/members");
+      revalidatePath(`/app/org/members/${memberId}`);
+      return {
+        ok: false,
+        message:
+          "We couldn't confirm whether this membership was renewed — the database connection was interrupted. Please check the member's membership periods before renewing again.",
+        errors: {},
+      };
+    }
+    if (classifyDatabaseError(error)) {
+      logDatabaseFailure({ boundary: "action:renewMembership", error });
+      // Pool-acquisition or statement timeout: the transaction never
+      // started or was aborted by the database — nothing was renewed,
+      // so a plain retry is safe.
+      return {
+        ok: false,
+        message:
+          "The database didn't respond in time, so this membership was not renewed. Please try again.",
+        errors: {},
+      };
+    }
+    logUnexpectedError({ boundary: "action:renewMembership", error });
+    // Unknown failures get a generic message — never leak internals.
+    return {
+      ok: false,
+      message: "Could not renew the membership. Please try again.",
       errors: {},
     };
   }

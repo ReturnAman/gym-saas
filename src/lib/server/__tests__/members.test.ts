@@ -15,6 +15,7 @@ const {
   mockPaymentFindMany,
   mockPaymentReversalGroupBy,
   mockPaymentReversalFindMany,
+  mockPaymentClaimGroupBy,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -29,6 +30,7 @@ const {
   mockPaymentFindMany: vi.fn(),
   mockPaymentReversalGroupBy: vi.fn(),
   mockPaymentReversalFindMany: vi.fn(),
+  mockPaymentClaimGroupBy: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -46,6 +48,7 @@ vi.mock("@/lib/server/db", () => ({
       count: mockMemberCount,
     },
     payment: { groupBy: mockPaymentGroupBy, findMany: mockPaymentFindMany },
+    paymentClaim: { groupBy: mockPaymentClaimGroupBy },
     paymentReversal: {
       groupBy: mockPaymentReversalGroupBy,
       findMany: mockPaymentReversalFindMany,
@@ -125,6 +128,7 @@ beforeEach(() => {
   mockPaymentFindMany.mockResolvedValue([]);
   mockPaymentReversalGroupBy.mockResolvedValue([]);
   mockPaymentReversalFindMany.mockResolvedValue([]);
+  mockPaymentClaimGroupBy.mockResolvedValue([]);
   mockOrgMembershipFindMany.mockResolvedValue([]);
 });
 
@@ -137,6 +141,7 @@ describe("getMemberPermissions", () => {
         canEdit: true,
         canRecordPayment: true,
         canReversePayment: true,
+        canRenewMembership: true,
       });
     }
   });
@@ -148,6 +153,7 @@ describe("getMemberPermissions", () => {
       canEdit: true,
       canRecordPayment: true,
       canReversePayment: false,
+      canRenewMembership: true,
     });
   });
 
@@ -158,6 +164,7 @@ describe("getMemberPermissions", () => {
       canEdit: false,
       canRecordPayment: false,
       canReversePayment: false,
+      canRenewMembership: false,
     });
   });
 
@@ -168,6 +175,7 @@ describe("getMemberPermissions", () => {
       canEdit: false,
       canRecordPayment: false,
       canReversePayment: false,
+      canRenewMembership: false,
     });
   });
 });

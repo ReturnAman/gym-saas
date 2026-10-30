@@ -17,12 +17,14 @@ const {
   mockRequireCurrentUser,
   mockRecordPayment,
   mockReversePayment,
+  mockRenewMembership,
   mockRevalidatePath,
   mockRedirect,
 } = vi.hoisted(() => ({
   mockRequireCurrentUser: vi.fn(),
   mockRecordPayment: vi.fn(),
   mockReversePayment: vi.fn(),
+  mockRenewMembership: vi.fn(),
   mockRevalidatePath: vi.fn(),
   mockRedirect: vi.fn(),
 }));
@@ -37,12 +39,19 @@ vi.mock("@/lib/server/members", () => {
   class MemberDuplicateError extends Error {
     duplicates = [];
   }
-  class MemberNotFoundError extends Error {}
+  class MemberNotFoundError extends Error {
+    constructor() {
+      super("Member not found.");
+    }
+  }
+  class MemberRenewalConflictError extends Error {}
   return {
     MemberAuthorizationError,
     MemberDuplicateError,
     MemberNotFoundError,
+    MemberRenewalConflictError,
     createMemberWithMembership: vi.fn(),
+    renewMembership: mockRenewMembership,
     updateMember: vi.fn(),
   };
 });
@@ -69,12 +78,19 @@ vi.mock("@/lib/server/payments", () => {
 
 import {
   recordPaymentAction,
+  renewMembershipAction,
   reversePaymentAction,
 } from "@/app/app/org/members/actions";
 import {
+  MemberValidationError,
   PaymentReversalValidationError,
   PaymentValidationError,
 } from "@/lib/members";
+import {
+  MemberAuthorizationError,
+  MemberNotFoundError,
+  MemberRenewalConflictError,
+} from "@/lib/server/members";
 import {
   PaymentAuthorizationError,
   PaymentIdempotencyConflictError,
@@ -105,6 +121,11 @@ beforeEach(() => {
   mockRequireCurrentUser.mockResolvedValue({ id: "owner-1" });
   mockRecordPayment.mockResolvedValue({ paymentId: "pay-1" });
   mockReversePayment.mockResolvedValue({ reversalId: "rev-1" });
+  mockRenewMembership.mockResolvedValue({
+    memberId: "member-1",
+    membershipId: "ms-2",
+    previousMembershipId: "ms-1",
+  });
 });
 
 describe("recordPaymentAction", () => {
@@ -341,5 +362,109 @@ describe("reversePaymentAction", () => {
     mockReversePayment.mockRejectedValue(dbError("P2024"));
     const state = await reversePaymentAction(REVERSAL_INITIAL, reversalForm());
     expect(state.message).toContain("this reversal was not recorded");
+  });
+});
+
+const RENEWAL_INITIAL = { ok: false, message: null, errors: {} };
+
+function renewalForm() {
+  const form = new FormData();
+  form.set("memberId", "member-1");
+  form.set("plan", "SIX_MONTHS");
+  form.set("fee", "6000");
+  form.set("expiryDate", "2027-04-30");
+  form.set("idempotencyToken", "550e8400-e29b-41d4-a716-446655440000");
+  return form;
+}
+
+describe("renewMembershipAction", () => {
+  it("on success: forwards fields and the token to the service, revalidates and redirects", async () => {
+    mockRedirect.mockImplementation(() => {
+      throw new Error("NEXT_REDIRECT");
+    });
+    await expect(
+      renewMembershipAction(RENEWAL_INITIAL, renewalForm()),
+    ).rejects.toThrow("NEXT_REDIRECT");
+    expect(mockRenewMembership).toHaveBeenCalledWith("owner-1", "member-1", {
+      plan: "SIX_MONTHS",
+      fee: "6000",
+      expiryDate: "2027-04-30",
+      idempotencyKey: "550e8400-e29b-41d4-a716-446655440000",
+    });
+    expect(mockRevalidatePath).toHaveBeenCalledWith("/app/org/members");
+    expect(mockRevalidatePath).toHaveBeenCalledWith(
+      "/app/org/members/member-1",
+    );
+  });
+
+  it("maps field validation errors per field", async () => {
+    mockRenewMembership.mockRejectedValue(
+      new MemberValidationError({
+        expiryDate: "Expiry date must not be before the new period's start date (2026-11-01).",
+      }),
+    );
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.ok).toBe(false);
+    expect(state.errors.expiryDate).toContain("start date");
+    expect(state.message).toBeNull();
+  });
+
+  it("maps a form-level validation error to the message", async () => {
+    mockRenewMembership.mockRejectedValue(
+      new MemberValidationError({
+        form: "This renewal submission is missing its confirmation token. Refresh the page and try again.",
+      }),
+    );
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.message).toContain("missing its confirmation token");
+    expect(state.errors).toEqual({});
+  });
+
+  it("maps an idempotency conflict to the check-first message", async () => {
+    mockRenewMembership.mockRejectedValue(new MemberRenewalConflictError());
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.ok).toBe(false);
+    expect(state.message).toContain("already used with different details");
+  });
+
+  it("passes authorization and not-found messages through", async () => {
+    mockRenewMembership.mockRejectedValue(
+      new MemberAuthorizationError("You do not have permission to renew memberships."),
+    );
+    let state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.message).toBe(
+      "You do not have permission to renew memberships.",
+    );
+    mockRenewMembership.mockRejectedValue(new MemberNotFoundError());
+    state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.message).toBe("Member not found.");
+  });
+
+  it("connection loss: check-first message, never a blind retry invitation", async () => {
+    mockRenewMembership.mockRejectedValue(dbError("P1001"));
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.ok).toBe(false);
+    expect(state.message).toContain(
+      "couldn't confirm whether this membership was renewed",
+    );
+    expect(state.message).not.toContain("P1001");
+    expect(mockRevalidatePath).toHaveBeenCalledWith(
+      "/app/org/members/member-1",
+    );
+  });
+
+  it("pool timeout: states plainly that nothing was renewed", async () => {
+    mockRenewMembership.mockRejectedValue(dbError("P2024"));
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.message).toContain("was not renewed");
+  });
+
+  it("unexpected errors get the generic message without internals", async () => {
+    mockRenewMembership.mockRejectedValue(new Error("surprise"));
+    const state = await renewMembershipAction(RENEWAL_INITIAL, renewalForm());
+    expect(state.message).toBe(
+      "Could not renew the membership. Please try again.",
+    );
+    expect(state.message).not.toContain("surprise");
   });
 });

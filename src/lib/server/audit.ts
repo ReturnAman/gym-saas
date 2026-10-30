@@ -29,6 +29,7 @@ export const AUDIT_EVENT_MEMBER_JOIN_REQUEST_APPROVED =
   "MEMBER_JOIN_REQUEST_APPROVED";
 export const AUDIT_EVENT_MEMBER_JOIN_REQUEST_REJECTED =
   "MEMBER_JOIN_REQUEST_REJECTED";
+export const AUDIT_EVENT_MEMBERSHIP_RENEWED = "MEMBERSHIP_RENEWED";
 // SaaS trial/subscription slice. Platform-admin mutations write these in
 // the same transaction as the mutation itself. Metadata never carries a
 // full phone number, a secret, or another tenant's data — phone values

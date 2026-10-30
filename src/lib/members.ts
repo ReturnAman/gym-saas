@@ -98,7 +98,13 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 
 export const MAX_PAYMENT_REFERENCE_LENGTH = 120;
 
-export type MemberField = "name" | "phoneNumber" | "fee" | "plan" | "startDate";
+export type MemberField =
+  | "name"
+  | "phoneNumber"
+  | "fee"
+  | "plan"
+  | "startDate"
+  | "expiryDate";
 
 /** Thrown when member input fails validation. Carries per-field messages. */
 export class MemberValidationError extends Error {
@@ -284,6 +290,27 @@ export function validateMemberInput(input: MemberInput): ValidatedMemberInput {
     startDate,
     expiryDate: calculateExpiryDate(startDate, plan),
   };
+}
+
+/**
+ * The start date of a renewal period, chained from the current
+ * membership's expiry date. Renewing on or before the expiry date
+ * starts the new period the following calendar day — no gap, no
+ * overlap, no paid days lost to an early renewal. Renewing after
+ * expiry starts the new period today. UTC calendar days throughout,
+ * consistent with deriveMembershipStatus (the expiry day itself is
+ * still a valid day of the old period).
+ */
+export function deriveRenewalStartDate(
+  currentExpiryDate: Date,
+  today: Date = new Date(),
+): Date {
+  const expiryDay = startOfUtcDay(currentExpiryDate);
+  const todayDay = startOfUtcDay(today);
+  if (todayDay.getTime() <= expiryDay.getTime()) {
+    return new Date(expiryDay.getTime() + 86_400_000);
+  }
+  return todayDay;
 }
 
 /**

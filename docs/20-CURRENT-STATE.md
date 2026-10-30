@@ -476,6 +476,56 @@ preserved untouched):
   cross-gym concurrency cases); production build exit 0, 31 routes
   (placeholder Clerk keys for page-data collection only).
 
+## 4.12 Membership renewal (implemented on branch `feature/saas-trial-subscriptions`, not yet released or deployed)
+
+- **What it does:** `renewMembership` (`src/lib/server/members.ts`)
+  starts a member's next period as a NEW Membership row; the old row
+  is never modified. Renewing on or before expiry chains the new
+  start to the day after expiry; renewing after expiry starts today
+  (UTC days, `deriveRenewalStartDate`). Plan and fee default from
+  the current period and are staff-confirmable; the expiry is
+  staff-supplied (prefilled with an editable suggestion) and
+  validated against the derived start — the service does no
+  plan-duration arithmetic. OWNER/ADMIN/STAFF only; entitlement
+  asserted before and inside the transaction; foreign member IDs
+  return the identical not-found. One `MEMBERSHIP_RENEWED` audit
+  per renewal, atomic with the row. Design:
+  `docs/features/membership-renewal.md`.
+- **Replay safety:** the renewal form's H4 token is required and
+  stored on the created row (`renewal_idempotency_key`, migration
+  `20261030120000_add_membership_renewal_idempotency_key`,
+  expand-only) under an organization-scoped unique. Identical
+  retries resolve to the original with no second row or audit;
+  conflicting reuse is rejected. Resolution is three-layered
+  (pre-transaction, in-transaction under token-then-member advisory
+  locks, unique-violation backstop) and runs only after the
+  caller's current authorization is re-verified. Concurrent
+  different-token renewals serialize on the per-member lock and
+  chain without forking.
+- **Money and claims stay per-period:** renewal creates no Payment,
+  claim, or reversal; the old period's outstanding stays on the old
+  period. Pending claims do not block renewal (the form shows the
+  count) and stay attached to their original period — confirming
+  one after renewal pays the old period. The member detail page
+  shows earlier periods read-only in a bounded Past memberships
+  section (10 periods, per-period histories bounded as elsewhere);
+  per-period paid/outstanding always derive from the central
+  funnel. Member detail now loads the current period plus that
+  bounded history with batched totals (one funnel call, one grouped
+  pending-claim count).
+- **Validation (2026-10-30, this branch, disposable local DB):**
+  Prisma schema valid; lint 0 errors (1 pre-existing k6 warning);
+  typecheck exit 0; unit suite 872 passed / 137 skipped; full
+  `test:db` 181 passed / 0 skipped, including the new 9-test
+  renewal DB suite (chaining with the old row byte-identical,
+  expired → renewed → self check-in restored, same-token replay
+  and conflict, concurrent same- and different-token submissions,
+  cross-gym not-found with zero writes, TRAINER and suspended-gym
+  denial, claim attachment). Production build exit 0 (placeholder
+  Clerk keys for page-data collection only). Not pushed, merged,
+  or deployed; the expand migration has run only on disposable
+  local databases.
+
 # 5. Data
 
 Twelve migrations, all covered by CI: run `39115484351` on
@@ -611,9 +661,13 @@ Supported by current repository evidence unless marked otherwise:
    uptime monitoring, or error tracking; ADR 007 still Proposed
    (Sentry the leading candidate) and `SENTRY_DSN` in `.env.example`
    is read by no code.
-5. **Membership renewal — Not started.** No renewal flow exists;
-   payments explicitly do not renew. A pilot gym's first plan expiry
-   has no product path yet.
+5. **Membership renewal — Implemented on the feature branch,
+   not yet released.** Renewal creates the next period as a new
+   row with token-based replay protection; money and claims stay
+   per-period, and earlier periods show read-only on the member
+   page (§4.12). Payments still explicitly do not renew. What
+   remains is release work only: push under its own approval,
+   branch CI, and deployment with its expand migration.
 6. **Payment correction / reversal — Merged and CI-verified,
    not yet deployed.** Append-only reversal records are merged
    in `main` (`ca43dc3`; §4.10), and CI run `39649256109`

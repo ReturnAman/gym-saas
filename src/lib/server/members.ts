@@ -4,20 +4,32 @@ import { Prisma, type Role } from "@prisma/client";
 
 import {
   MEMBERSHIP_EXPIRING_WITHIN_DAYS,
+  MemberValidationError,
   PLAN_LABELS,
   deriveMembershipPayments,
   deriveMembershipStatus,
   derivePaymentStatus,
+  deriveRenewalStartDate,
+  isMembershipPlan,
+  parseDateInput,
   startOfUtcDay,
+  validateFee,
   validateMemberInput,
   validateName,
   validatePhoneNumber,
+  type MemberField,
   type MembershipPlan,
   type MembershipStatus,
   type PaymentStatus,
 } from "../members";
+import { isValidIdempotencyKey } from "../idempotency";
+import { AUDIT_EVENT_MEMBERSHIP_RENEWED, writeAuditEvent } from "./audit";
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 import {
   canRecordPayment,
   canReversePayment,
@@ -95,6 +107,8 @@ export interface MemberPermissions {
   canRecordPayment: boolean;
   /** Reverse a confirmed payment: OWNER, ADMIN only (never STAFF). */
   canReversePayment: boolean;
+  /** Renew a membership (create the next period): OWNER, ADMIN, STAFF. */
+  canRenewMembership: boolean;
 }
 
 export function getMemberPermissions(role: Role): MemberPermissions {
@@ -107,6 +121,7 @@ export function getMemberPermissions(role: Role): MemberPermissions {
     canEdit: staff,
     canRecordPayment: canRecordPayment(role),
     canReversePayment: canReversePayment(role),
+    canRenewMembership: staff,
   };
 }
 
@@ -376,10 +391,16 @@ export interface MemberDetailMembership {
   outstandingPaise: number;
   membershipStatus: MembershipStatus;
   paymentStatus: PaymentStatus;
-  /** Confirmed payment history (gross receipts), newest first. */
+  /** Payment claims still awaiting verification against this period. */
+  pendingClaimsCount: number;
+  /** Confirmed payment history (gross receipts), newest first, display-bounded. */
   payments: PaymentHistoryItem[];
-  /** Reversal history netting against the receipts, newest first. */
+  /** True when older payments exist beyond the displayed records. */
+  paymentsTruncated: boolean;
+  /** Reversal history netting against the receipts, newest first, display-bounded. */
   reversals: PaymentReversalHistoryItem[];
+  /** True when older reversals exist beyond the displayed records. */
+  reversalsTruncated: boolean;
 }
 
 export interface MemberDetail {
@@ -387,8 +408,20 @@ export interface MemberDetail {
   name: string;
   phoneNumber: string;
   membership: MemberDetailMembership | null;
+  /**
+   * Earlier membership periods, newest first, display-bounded
+   * (PAST_MEMBERSHIPS_LIMIT). Read-only history: each period keeps its
+   * own fee, payments, reversals and claims — balances never merge
+   * across periods.
+   */
+  pastMemberships: MemberDetailMembership[];
+  /** True when older periods exist beyond the displayed ones. */
+  pastMembershipsTruncated: boolean;
   permissions: MemberPermissions;
 }
+
+/** Past periods shown on the member page besides the current one. */
+export const PAST_MEMBERSHIPS_LIMIT = 10;
 
 /**
  * Load one member inside the caller's organization. Returns null when the
@@ -408,7 +441,12 @@ export async function getMemberDetail(
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
     include: {
-      memberships: { orderBy: { createdAt: "desc" }, take: 1 },
+      memberships: {
+        orderBy: { createdAt: "desc" },
+        // Current period + the bounded past-period history + one
+        // extra row to detect truncation.
+        take: PAST_MEMBERSHIPS_LIMIT + 2,
+      },
     },
   });
   if (!member) return null;
@@ -417,39 +455,39 @@ export async function getMemberDetail(
     return null;
   }
 
-  const latest = member.memberships[0] ?? null;
+  const loaded = member.memberships;
+  const currentRow = loaded[0] ?? null;
+  const pastRows = loaded.slice(1, PAST_MEMBERSHIPS_LIMIT + 1);
+  const pastMembershipsTruncated = loaded.length > PAST_MEMBERSHIPS_LIMIT + 1;
+
   let membership: MemberDetailMembership | null = null;
-  if (latest) {
-    const feePaise = decimalToPaise(latest.fee);
-    const sums = await sumConfirmedPaymentsByMembership(scope.organizationId, [
-      latest.id,
-    ]);
-    const { paidPaise, outstandingPaise } = deriveMembershipPayments(
-      feePaise,
-      sums.get(latest.id) ?? 0,
-    );
-    const payments = await listPaymentsForMembership(
+  let pastMemberships: MemberDetailMembership[] = [];
+  const rows = [...(currentRow ? [currentRow] : []), ...pastRows];
+  if (rows.length > 0) {
+    // One batched funnel call and one grouped count cover every
+    // displayed period — no per-period query fan-out for totals.
+    const ids = rows.map((row) => row.id);
+    const sums = await sumConfirmedPaymentsByMembership(
       scope.organizationId,
-      latest.id,
+      ids,
     );
-    const reversals = await listReversalsForMembership(
+    const pendingCounts = await countPendingClaimsByMembership(
       scope.organizationId,
-      latest.id,
+      ids,
     );
-    membership = {
-      id: latest.id,
-      plan: latest.plan,
-      planLabel: PLAN_LABELS[latest.plan],
-      startDate: toDateString(latest.startDate),
-      expiryDate: toDateString(latest.expiryDate),
-      feePaise,
-      paidPaise,
-      outstandingPaise,
-      membershipStatus: deriveMembershipStatus(latest.expiryDate),
-      paymentStatus: derivePaymentStatus(feePaise, paidPaise),
-      payments,
-      reversals,
-    };
+    const built: MemberDetailMembership[] = [];
+    for (const row of rows) {
+      built.push(
+        await buildDetailMembership(
+          scope.organizationId,
+          row,
+          sums,
+          pendingCounts,
+        ),
+      );
+    }
+    membership = currentRow ? (built[0] ?? null) : null;
+    pastMemberships = currentRow ? built.slice(1) : built;
   }
 
   return {
@@ -457,7 +495,74 @@ export async function getMemberDetail(
     name: member.name,
     phoneNumber: member.phoneNumber,
     membership,
+    pastMemberships,
+    pastMembershipsTruncated,
     permissions,
+  };
+}
+
+/** Pending-claim counts per membership, one grouped query. */
+async function countPendingClaimsByMembership(
+  organizationId: string,
+  membershipIds: string[],
+): Promise<Map<string, number>> {
+  if (membershipIds.length === 0) return new Map();
+  const grouped = await db.paymentClaim.groupBy({
+    by: ["membershipId"],
+    where: {
+      organizationId,
+      membershipId: { in: membershipIds },
+      status: "PENDING",
+    },
+    _count: { _all: true },
+  });
+  return new Map(grouped.map((row) => [row.membershipId, row._count._all]));
+}
+
+type MembershipDetailRow = {
+  id: string;
+  plan: MembershipPlan;
+  startDate: Date;
+  expiryDate: Date;
+  fee: Prisma.Decimal;
+};
+
+/** Assemble one period's detail block (current or past) from batched totals. */
+async function buildDetailMembership(
+  organizationId: string,
+  row: MembershipDetailRow,
+  sums: Map<string, number>,
+  pendingCounts: Map<string, number>,
+): Promise<MemberDetailMembership> {
+  const feePaise = decimalToPaise(row.fee);
+  const { paidPaise, outstandingPaise } = deriveMembershipPayments(
+    feePaise,
+    sums.get(row.id) ?? 0,
+  );
+  const paymentHistory = await listPaymentsForMembership(
+    organizationId,
+    row.id,
+  );
+  const reversalHistory = await listReversalsForMembership(
+    organizationId,
+    row.id,
+  );
+  return {
+    id: row.id,
+    plan: row.plan,
+    planLabel: PLAN_LABELS[row.plan],
+    startDate: toDateString(row.startDate),
+    expiryDate: toDateString(row.expiryDate),
+    feePaise,
+    paidPaise,
+    outstandingPaise,
+    membershipStatus: deriveMembershipStatus(row.expiryDate),
+    paymentStatus: derivePaymentStatus(feePaise, paidPaise),
+    pendingClaimsCount: pendingCounts.get(row.id) ?? 0,
+    payments: paymentHistory.items,
+    paymentsTruncated: paymentHistory.truncated,
+    reversals: reversalHistory.items,
+    reversalsTruncated: reversalHistory.truncated,
   };
 }
 
@@ -512,10 +617,16 @@ export async function createMemberWithMembership(
       "You do not have permission to add members.",
     );
   }
+  // SaaS entitlement: a restricted gym cannot add members, even by a
+  // direct server-action call that bypasses the gated pages.
+  await assertOperationsAllowed(scope.organizationId);
 
   const validated = validateMemberInput(input);
 
   const memberId = await db.$transaction(async (tx) => {
+    // Re-check entitlement inside the transaction: a gym suspended
+    // between the pre-check above and this write must not create.
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     // Serialize against join-request decisions for the same
     // (gym, phone): approval of a pending request scans the member
     // records for the phone and adopts/creates under this same lock
@@ -606,6 +717,7 @@ export async function updateMember(
       "You do not have permission to edit members.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -631,4 +743,343 @@ export async function updateMember(
     where: { id: member.id },
     data: { name, phoneNumber },
   });
+}
+
+// ---------------------------------------------------------------------------
+// Renewal (owner decision sheet 2026-10-22, approved Phase 9B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a renewal idempotency token was already used for a
+ * DIFFERENT renewal (another member, or different plan/fee/expiry).
+ * The submission is rejected and nothing is written.
+ */
+export class MemberRenewalConflictError extends Error {
+  constructor(
+    message = "This renewal submission was already used with different details.",
+  ) {
+    super(message);
+    this.name = "MemberRenewalConflictError";
+  }
+}
+
+export interface RenewMembershipInput {
+  /** Plan for the new period; omitted/blank defaults to the current plan. */
+  plan?: string;
+  /** Fee for the new period (decimal string); omitted/blank defaults to the current fee. */
+  fee?: string;
+  /** Staff-confirmed expiry date (yyyy-mm-dd) for the new period. Required. */
+  expiryDate?: string;
+  /** H4 idempotency token minted by the renewal form. Required. */
+  idempotencyKey?: string;
+}
+
+export interface RenewMembershipResult {
+  memberId: string;
+  /** The created membership — or the original one, on a replay. */
+  membershipId: string;
+  /**
+   * The membership the new period chained from. Read back from the
+   * renewal's audit event on a replay; null only if that event is
+   * somehow missing (the row and its event commit atomically, so a
+   * replayed renewal always has one).
+   */
+  previousMembershipId: string | null;
+}
+
+interface ResolvedRenewalPayload {
+  /** Explicit plan from the submission, or null to default from the current membership. */
+  plan: MembershipPlan | null;
+  /** Explicit fee in exact paise, or null to default from the current membership. */
+  feePaise: number | null;
+  /** Staff-confirmed expiry for the new period. */
+  expiryDate: Date;
+}
+
+/**
+ * Validate the renewal payload. Plan and fee may be omitted to default
+ * from the current membership; the expiry date is always explicit
+ * (staff-confirmed — the service performs no plan-duration arithmetic).
+ */
+function resolveRenewalPayload(
+  input: RenewMembershipInput,
+): ResolvedRenewalPayload {
+  const errors: Partial<Record<MemberField | "form", string>> = {};
+
+  let plan: MembershipPlan | null = null;
+  const rawPlan = (input.plan ?? "").trim();
+  if (rawPlan !== "") {
+    if (isMembershipPlan(rawPlan)) {
+      plan = rawPlan;
+    } else {
+      errors.plan =
+        "Choose a membership plan: Monthly, 3 Months, 6 Months, or 12 Months.";
+    }
+  }
+
+  let feePaise: number | null = null;
+  const rawFee = (input.fee ?? "").trim();
+  if (rawFee !== "") {
+    try {
+      feePaise = validateFee(rawFee);
+    } catch (error) {
+      if (error instanceof MemberValidationError) {
+        Object.assign(errors, error.errors);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const expiryDate = parseDateInput(input.expiryDate ?? "");
+  if (!expiryDate) {
+    errors.expiryDate = "Enter a valid expiry date for the new period.";
+  }
+
+  if (Object.keys(errors).length > 0) {
+    throw new MemberValidationError(errors);
+  }
+  return { plan, feePaise, expiryDate: expiryDate as Date };
+}
+
+/** A renewal submission must carry its form's H4 token. */
+function requireRenewalIdempotencyKey(raw: string | undefined): string {
+  const key = (raw ?? "").trim();
+  if (!isValidIdempotencyKey(key)) {
+    throw new MemberValidationError({
+      form: "This renewal submission is missing its confirmation token. Refresh the page and try again.",
+    });
+  }
+  return key;
+}
+
+type RenewalLookupClient =
+  | Pick<typeof db, "membership" | "auditLog">
+  | Pick<Prisma.TransactionClient, "membership" | "auditLog">;
+
+/**
+ * Resolve a renewal idempotency token inside one organization. Returns
+ * the original result when the token already created a membership for
+ * this member with a matching payload, throws
+ * MemberRenewalConflictError when the token was used differently, and
+ * returns null when the token is unused. Fields the submission omitted
+ * (plan/fee defaults) do not participate in the comparison: the caller
+ * asked for the default, and the stored row is what the default
+ * produced. Used identically by the pre-transaction fast path, the
+ * in-transaction authoritative recheck, and the unique-violation
+ * backstop, so every path reaches the same verdict.
+ */
+async function resolveRenewalReplay(
+  client: RenewalLookupClient,
+  organizationId: string,
+  memberId: string,
+  idempotencyKey: string,
+  payload: ResolvedRenewalPayload,
+): Promise<RenewMembershipResult | null> {
+  const existing = await client.membership.findFirst({
+    where: { organizationId, renewalIdempotencyKey: idempotencyKey },
+    select: {
+      id: true,
+      memberId: true,
+      plan: true,
+      fee: true,
+      expiryDate: true,
+    },
+  });
+  if (!existing) return null;
+
+  const conflicts =
+    existing.memberId !== memberId ||
+    (payload.plan !== null && existing.plan !== payload.plan) ||
+    (payload.feePaise !== null &&
+      decimalToPaise(existing.fee) !== payload.feePaise) ||
+    existing.expiryDate.getTime() !== payload.expiryDate.getTime();
+  if (conflicts) {
+    throw new MemberRenewalConflictError();
+  }
+
+  const audit = await client.auditLog.findFirst({
+    where: {
+      organizationId,
+      event: AUDIT_EVENT_MEMBERSHIP_RENEWED,
+      targetId: existing.id,
+    },
+    select: { metadata: true },
+  });
+  const metadata = (audit?.metadata ?? {}) as {
+    previousMembershipId?: unknown;
+  };
+  return {
+    memberId: existing.memberId,
+    membershipId: existing.id,
+    previousMembershipId:
+      typeof metadata.previousMembershipId === "string"
+        ? metadata.previousMembershipId
+        : null,
+  };
+}
+
+/** True when the error is the renewal token's unique index firing. */
+function isRenewalKeyConflict(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002" &&
+    JSON.stringify(error.meta?.target ?? "").includes(
+      "renewal_idempotency_key",
+    )
+  );
+}
+
+/**
+ * Renew a member's membership: create the NEXT Membership period and
+ * leave the current row untouched.
+ *
+ * Chaining (deriveRenewalStartDate): renewing on or before the current
+ * expiry starts the new period the following calendar day; renewing
+ * after expiry starts it today. ACTIVE, EXPIRING and EXPIRED
+ * memberships are all eligible. Plan and fee default from the current
+ * membership and are staff-confirmable; the expiry date is
+ * staff-supplied and only validated (never before the derived start).
+ *
+ * Money stays per-period: renewal creates no Payment, claim, or
+ * reversal; the old period's outstanding stays on the old period, and
+ * claims keep pointing at the period they were submitted against.
+ * Pending claims never block renewal.
+ *
+ * Replay safety (H4): the form's token is required, stored on the
+ * created row under an organization-scoped unique, and resolved by
+ * resolveRenewalReplay on three layers — pre-transaction fast path,
+ * in-transaction recheck under advisory locks (token lock first, then
+ * the per-member lock, always in that order), and a P2002 backstop. A
+ * replay runs only AFTER the caller's current scope, role, and SaaS
+ * entitlement have been re-verified, and the member must load inside
+ * the caller's organization first — a token never widens access.
+ */
+export async function renewMembership(
+  userId: string,
+  memberId: string,
+  input: RenewMembershipInput,
+): Promise<RenewMembershipResult> {
+  const scope = await resolveScope(userId);
+  if (!getMemberPermissions(scope.role).canRenewMembership) {
+    throw new MemberAuthorizationError(
+      "You do not have permission to renew memberships.",
+    );
+  }
+  await assertOperationsAllowed(scope.organizationId);
+
+  const idempotencyKey = requireRenewalIdempotencyKey(input.idempotencyKey);
+  const payload = resolveRenewalPayload(input);
+
+  const member = await db.member.findFirst({
+    where: { id: memberId, organizationId: scope.organizationId },
+    select: { id: true },
+  });
+  if (!member) {
+    throw new MemberNotFoundError();
+  }
+
+  const replay = await resolveRenewalReplay(
+    db,
+    scope.organizationId,
+    member.id,
+    idempotencyKey,
+    payload,
+  );
+  if (replay) return replay;
+
+  try {
+    return await db.$transaction(async (tx) => {
+      // Re-check entitlement inside the transaction: a gym suspended
+      // between the pre-check above and this write must not renew.
+      await assertOperationsAllowedInTransaction(tx, scope.organizationId);
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${"membership-renewal-token:" + idempotencyKey}))
+      `;
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${"member-renewal:" + scope.organizationId + ":" + member.id}))
+      `;
+
+      const inTransactionReplay = await resolveRenewalReplay(
+        tx,
+        scope.organizationId,
+        member.id,
+        idempotencyKey,
+        payload,
+      );
+      if (inTransactionReplay) return inTransactionReplay;
+
+      const current = await tx.membership.findFirst({
+        where: {
+          organizationId: scope.organizationId,
+          memberId: member.id,
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, plan: true, fee: true, expiryDate: true },
+      });
+      // No membership row: there is nothing to renew. Same not-found
+      // behavior as a missing member — no first membership is invented.
+      if (!current) {
+        throw new MemberNotFoundError();
+      }
+
+      const startDate = deriveRenewalStartDate(current.expiryDate);
+      if (payload.expiryDate.getTime() < startDate.getTime()) {
+        throw new MemberValidationError({
+          expiryDate: `Expiry date must not be before the new period's start date (${toDateString(startDate)}).`,
+        });
+      }
+      const plan = payload.plan ?? current.plan;
+      const feePaise = payload.feePaise ?? decimalToPaise(current.fee);
+
+      const created = await tx.membership.create({
+        data: {
+          organizationId: scope.organizationId,
+          memberId: member.id,
+          plan,
+          startDate,
+          expiryDate: payload.expiryDate,
+          // Exact Decimal from integer paise — no floating point.
+          fee: new Prisma.Decimal(feePaise).div(100),
+          renewalIdempotencyKey: idempotencyKey,
+        },
+        select: { id: true },
+      });
+      await writeAuditEvent(tx, {
+        organizationId: scope.organizationId,
+        actorUserId: scope.userId,
+        event: AUDIT_EVENT_MEMBERSHIP_RENEWED,
+        targetType: "Membership",
+        targetId: created.id,
+        metadata: {
+          memberId: member.id,
+          previousMembershipId: current.id,
+          plan,
+          startDate: toDateString(startDate),
+          expiryDate: toDateString(payload.expiryDate),
+          feePaise,
+        },
+      });
+      return {
+        memberId: member.id,
+        membershipId: created.id,
+        previousMembershipId: current.id,
+      };
+    });
+  } catch (error) {
+    // Backstop: the token's unique index fired despite the locks (only
+    // reachable if a writer bypassed them). Resolve exactly like the
+    // replay paths — never a blind retry of the insert.
+    if (isRenewalKeyConflict(error)) {
+      const resolved = await resolveRenewalReplay(
+        db,
+        scope.organizationId,
+        member.id,
+        idempotencyKey,
+        payload,
+      );
+      if (resolved) return resolved;
+    }
+    throw error;
+  }
 }

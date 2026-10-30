@@ -35,6 +35,7 @@ const {
 
 vi.mock("@/lib/server/db", () => ({
   db: {
+    organizationSubscription: { findUnique: vi.fn(async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) })) },
     organizationMembership: {
       findFirst: mockOrgMembershipFindFirst,
       findMany: mockOrgMembershipFindMany,
@@ -58,6 +59,7 @@ vi.mock("@/lib/server/auth", () => ({
 import { PaymentReversalValidationError } from "@/lib/members";
 import { AUDIT_EVENT_PAYMENT_REVERSED } from "@/lib/server/audit";
 import {
+  PAYMENT_HISTORY_LIMIT,
   PaymentAuthorizationError,
   PaymentIdempotencyConflictError,
   PaymentNotFoundError,
@@ -118,6 +120,7 @@ function mockTransactionBody(actorRole = "OWNER") {
   mockAuditLogCreate.mockResolvedValue({ id: "audit-id" });
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
+      organizationSubscription: { findUnique: async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) }) },
       $queryRaw: mockTxQueryRaw,
       payment: { findFirst: mockTxPaymentFindFirst },
       paymentReversal: {
@@ -394,8 +397,9 @@ describe("payment and reversal history DTOs", () => {
     mockOrgMembershipFindMany.mockResolvedValue([
       { userId: USER_ID, role: "OWNER" },
     ]);
-    const items = await listPaymentsForMembership(ORG_ID, MEMBERSHIP_ID);
-    expect(items).toEqual([
+    const result = await listPaymentsForMembership(ORG_ID, MEMBERSHIP_ID);
+    expect(result.truncated).toBe(false);
+    expect(result.items).toEqual([
       {
         id: PAYMENT_ID,
         amountPaise: 600_000,
@@ -407,6 +411,27 @@ describe("payment and reversal history DTOs", () => {
         remainingReversiblePaise: 400_000,
       },
     ]);
+    expect(mockPaymentFindMany.mock.calls[0]?.[0].take).toBe(
+      PAYMENT_HISTORY_LIMIT + 1,
+    );
+  });
+
+  it("caps payment history at the limit and flags truncation via the probe row", async () => {
+    mockPaymentFindMany.mockResolvedValue(
+      Array.from({ length: PAYMENT_HISTORY_LIMIT + 1 }, (_, i) => ({
+        id: `payment-${i}`,
+        amount: new Prisma.Decimal("100"),
+        paymentMethod: "CASH",
+        reference: null,
+        confirmedAt: new Date(Date.UTC(2026, 9, 1, 10, 0)),
+        confirmedBy: USER_ID,
+      })),
+    );
+    mockPaymentReversalGroupBy.mockResolvedValue([]);
+    mockOrgMembershipFindMany.mockResolvedValue([]);
+    const result = await listPaymentsForMembership(ORG_ID, MEMBERSHIP_ID);
+    expect(result.items).toHaveLength(PAYMENT_HISTORY_LIMIT);
+    expect(result.truncated).toBe(true);
   });
 
   it("maps reversal rows to history items with the reverser's role", async () => {
@@ -424,8 +449,9 @@ describe("payment and reversal history DTOs", () => {
     mockOrgMembershipFindMany.mockResolvedValue([
       { userId: USER_ID, role: "ADMIN" },
     ]);
-    const items = await listReversalsForMembership(ORG_ID, MEMBERSHIP_ID);
-    expect(items).toEqual([
+    const result = await listReversalsForMembership(ORG_ID, MEMBERSHIP_ID);
+    expect(result.truncated).toBe(false);
+    expect(result.items).toEqual([
       {
         id: REVERSAL_ID,
         paymentId: PAYMENT_ID,
@@ -440,5 +466,26 @@ describe("payment and reversal history DTOs", () => {
       organizationId: ORG_ID,
       membershipId: MEMBERSHIP_ID,
     });
+    expect(mockPaymentReversalFindMany.mock.calls[0]?.[0].take).toBe(
+      PAYMENT_HISTORY_LIMIT + 1,
+    );
+  });
+
+  it("caps reversal history at the limit and flags truncation via the probe row", async () => {
+    mockPaymentReversalFindMany.mockResolvedValue(
+      Array.from({ length: PAYMENT_HISTORY_LIMIT + 1 }, (_, i) => ({
+        id: `reversal-${i}`,
+        paymentId: PAYMENT_ID,
+        amount: new Prisma.Decimal("100"),
+        reason: "OTHER",
+        explanation: null,
+        createdAt: new Date(Date.UTC(2026, 9, 2, 9, 0)),
+        reversedBy: USER_ID,
+      })),
+    );
+    mockOrgMembershipFindMany.mockResolvedValue([]);
+    const result = await listReversalsForMembership(ORG_ID, MEMBERSHIP_ID);
+    expect(result.items).toHaveLength(PAYMENT_HISTORY_LIMIT);
+    expect(result.truncated).toBe(true);
   });
 });

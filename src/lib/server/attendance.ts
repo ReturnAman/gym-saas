@@ -16,6 +16,10 @@ import {
 import { getPrimaryMembership } from "./authorization";
 import { db } from "./db";
 import type { MemberSessionContext } from "./member-session";
+import {
+  assertOperationsAllowed,
+  assertOperationsAllowedInTransaction,
+} from "./subscriptions";
 
 /**
  * Server-side Attendance service (Attendance V1 — Slice 1: staff manual
@@ -422,6 +426,7 @@ export async function checkInMember(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
 
   const member = await db.member.findFirst({
     where: { id: memberId, organizationId: scope.organizationId },
@@ -472,6 +477,9 @@ export async function checkInSelf(
   if (!member) {
     throw new AttendanceNotFoundError();
   }
+  // SaaS entitlement: members of a restricted gym cannot check in, even
+  // by calling the check-in API directly.
+  await assertOperationsAllowed(context.session.organizationId);
 
   return createCheckInSession(
     {
@@ -512,6 +520,7 @@ export async function checkOutMember(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
   const now = opts.now ?? new Date();
 
   const session = await db.attendanceSession.findFirst({
@@ -532,6 +541,7 @@ export async function checkOutMember(
   // first, the claim matches nothing — this call then behaves exactly
   // like the idempotent path above (returns the session, no audit).
   const claimed = await db.$transaction(async (tx) => {
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const claim = await tx.attendanceSession.updateMany({
       where: {
         id: session.id,
@@ -590,9 +600,11 @@ export async function checkOutAllOpenSessions(
       "You do not have permission to manage attendance.",
     );
   }
+  await assertOperationsAllowed(scope.organizationId);
   const now = opts.now ?? new Date();
 
   const closedCount = await db.$transaction(async (tx) => {
+    await assertOperationsAllowedInTransaction(tx, scope.organizationId);
     const openSessions = await tx.attendanceSession.findMany({
       where: { organizationId: scope.organizationId, checkOutAt: null },
       select: { id: true, memberId: true },
@@ -697,15 +709,40 @@ export async function listMemberAttendance(
 }
 
 /**
- * Today's attendance for the caller's gym: every session whose check-in
- * falls inside the Asia/Kolkata calendar day containing `now` (default:
- * the current instant), newest first. Day boundaries are gym-local
- * (Kolkata), converted to UTC bounds for the query.
+ * Display bound for the today list (M1): a seatbelt, not a product
+ * limit — the read is inherently bounded to one gym-day, and the
+ * exact totals ride along as database counts, so a bound list never
+ * distorts the day's numbers or hides that more records exist.
+ */
+export const MAX_TODAY_SESSIONS = 1000;
+
+/** Today's attendance: the displayed sessions plus exact day counts. */
+export interface TodayAttendance {
+  /** Newest first, at most MAX_TODAY_SESSIONS entries. */
+  sessions: TodayAttendanceItem[];
+  /** Exact number of check-ins today (database count, never capped). */
+  totalCount: number;
+  /** Exact number of sessions still open today (checkOutAt null). */
+  openCount: number;
+  /** True when more sessions exist today than the list displays. */
+  truncated: boolean;
+}
+
+/**
+ * Today's attendance for the caller's gym: sessions whose check-in
+ * falls inside the Asia/Kolkata calendar day containing `now`
+ * (default: the current instant), newest first. Day boundaries are
+ * gym-local (Kolkata), converted to UTC bounds for the query. The
+ * displayed list is bounded at the database (MAX_TODAY_SESSIONS,
+ * with a one-row probe); the day's total and open-session counts
+ * are exact database counts over the same window, so they stay
+ * correct — and the end-of-day close-all affordance stays visible —
+ * even when older sessions fall outside the displayed rows.
  */
 export async function listTodayAttendance(
   userId: string,
   opts: { now?: Date } = {},
-): Promise<TodayAttendanceItem[]> {
+): Promise<TodayAttendance> {
   const scope = await resolveScope(userId);
   if (!canViewAttendance(scope.role)) {
     throw new AttendanceAuthorizationError(
@@ -713,20 +750,34 @@ export async function listTodayAttendance(
     );
   }
   const { startUtc, endUtc } = getKolkataDayBoundsUtc(opts.now ?? new Date());
+  const dayWhere = {
+    organizationId: scope.organizationId,
+    checkInAt: { gte: startUtc, lt: endUtc },
+  };
 
-  const sessions = await db.attendanceSession.findMany({
-    where: {
-      organizationId: scope.organizationId,
-      checkInAt: { gte: startUtc, lt: endUtc },
-    },
-    orderBy: { checkInAt: "desc" },
-    include: { member: { select: { name: true } } },
-  });
+  const [totalCount, openCount, rows] = await Promise.all([
+    db.attendanceSession.count({ where: dayWhere }),
+    db.attendanceSession.count({
+      where: { ...dayWhere, checkOutAt: null },
+    }),
+    db.attendanceSession.findMany({
+      where: dayWhere,
+      orderBy: { checkInAt: "desc" },
+      take: MAX_TODAY_SESSIONS + 1,
+      include: { member: { select: { name: true } } },
+    }),
+  ]);
+  const sessions = rows.slice(0, MAX_TODAY_SESSIONS);
   const roleByUserId = await actorRolesByUserId(scope.organizationId, sessions);
-  return sessions.map((session) => ({
-    ...toSessionItem(session, roleByUserId),
-    memberName: session.member.name,
-  }));
+  return {
+    sessions: sessions.map((session) => ({
+      ...toSessionItem(session, roleByUserId),
+      memberName: session.member.name,
+    })),
+    totalCount,
+    openCount,
+    truncated: rows.length > MAX_TODAY_SESSIONS,
+  };
 }
 
 // ---------------------------------------------------------------------------

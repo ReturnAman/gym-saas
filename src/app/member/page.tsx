@@ -1,8 +1,15 @@
 import Link from "next/link";
 
+import { redirect } from "next/navigation";
+
 import { formatKolkataDateTime } from "@/lib/attendance";
 import { getOwnOpenSession } from "@/lib/server/attendance";
 import { getMemberContext } from "@/lib/server/member-session";
+import {
+  getOrganizationSubscription,
+  isOperationsState,
+  resolveEffectiveState,
+} from "@/lib/server/subscriptions";
 
 /**
  * Member authentication proof page (ADR 021, milestone scope).
@@ -31,6 +38,16 @@ export default async function MemberPage() {
   }
 
   const { organization, member, membership, session } = context;
+  // Entitlement gate for the member landing itself: members of a
+  // restricted gym see the restricted notice, not gym operations. (The
+  // signed-out branch above is deliberately ungated — authentication
+  // must always remain possible.)
+  const subscription = await getOrganizationSubscription(organization.id);
+  if (
+    !isOperationsState(resolveEffectiveState(subscription, new Date()))
+  ) {
+    redirect("/member/restricted");
+  }
   const openSession = await getOwnOpenSession(context);
 
   return (

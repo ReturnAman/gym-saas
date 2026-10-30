@@ -9,7 +9,7 @@ import {
 import {
   getOwnAttendancePage,
 } from "@/lib/server/attendance";
-import { requireMemberContext } from "@/lib/server/member-session";
+import { requireEntitledMemberContext } from "@/lib/server/subscriptions";
 
 /**
  * Member attendance history (Attendance Slice 2, S4).
@@ -20,7 +20,7 @@ import { requireMemberContext } from "@/lib/server/member-session";
  * gym or another person's records. All times render in Asia/Kolkata.
  */
 export default async function MemberAttendancePage() {
-  const context = await requireMemberContext();
+  const context = await requireEntitledMemberContext();
 
   if (!context.member) {
     return (

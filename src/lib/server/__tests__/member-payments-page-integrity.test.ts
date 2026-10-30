@@ -22,8 +22,11 @@ const MEMBER_HOME = read("src/app/member/page.tsx");
  */
 describe("member payments page scoping", () => {
   it("requires the member session context from the session module", () => {
-    expect(PAGE).toMatch(/requireMemberContext/);
-    expect(PAGE).toMatch(/from "@\/lib\/server\/member-session"/);
+    // Entitlement wrapper (trial/subscription slice): it resolves the
+    // same server-side member session context as before, then
+    // additionally redirects restricted gyms to the restricted notice.
+    expect(PAGE).toMatch(/requireEntitledMemberContext/);
+    expect(PAGE).toMatch(/from "@\/lib\/server\/subscriptions"/);
   });
 
   it("translates the session into a claim scope in exactly one place", () => {

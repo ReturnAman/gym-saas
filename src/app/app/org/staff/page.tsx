@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   StaffAuthorizationError,
   getStaffPermissions,
@@ -15,7 +15,7 @@ import styles from "./staff.module.css";
  * Staff management for the actor's gym.
  *
  * Requires authentication AND organization membership (via
- * requireOrganizationContext). The organization is the actor's primary
+ * requireEntitledOrganizationContext). The organization is the actor's primary
  * gym — the same server-side resolution every org page uses; there is
  * no gym switcher yet, and the header says so while naming the gym
  * prominently. Viewing is OWNER/ADMIN (the service enforces the same
@@ -24,7 +24,7 @@ import styles from "./staff.module.css";
  */
 export default async function StaffPage() {
   const { user, membership, organization } =
-    await requireOrganizationContext();
+    await requireEntitledOrganizationContext();
   const permissions = getStaffPermissions(membership.role);
 
   const header = (

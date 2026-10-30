@@ -25,8 +25,8 @@ vi.mock("next/link", () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
-vi.mock("@/lib/server/authorization", () => ({
-  requireOrganizationContext: mockContext,
+vi.mock("@/lib/server/subscriptions", () => ({
+  requireEntitledOrganizationContext: mockContext,
 }));
 
 vi.mock("@/lib/server/payment-claims", async () => {
@@ -84,7 +84,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   managerProps.current = null;
   mockContext.mockResolvedValue(contextWithRole("OWNER"));
-  mockListReview.mockResolvedValue([REVIEW_VIEW]);
+  mockListReview.mockResolvedValue({ claims: [REVIEW_VIEW], totalPending: 1 });
 });
 
 describe("PaymentClaimsPage", () => {
@@ -109,10 +109,26 @@ describe("PaymentClaimsPage", () => {
   });
 
   it("renders the empty state when nothing is waiting", async () => {
-    mockListReview.mockResolvedValue([]);
+    mockListReview.mockResolvedValue({ claims: [], totalPending: 0 });
     const html = renderToString(await PaymentClaimsPage());
     expect(html).toContain("No payments are waiting for verification.");
     expect(managerProps.current).toBeNull();
+  });
+
+  it("shows a truncation notice with the exact total when the queue is bounded", async () => {
+    mockListReview.mockResolvedValue({
+      claims: Array.from({ length: 100 }, (_, i) => ({
+        ...REVIEW_VIEW,
+        id: `claim-${i}`,
+      })),
+      totalPending: 137,
+    });
+    const html = renderToString(await PaymentClaimsPage());
+    expect(html).toContain("Showing the oldest 100 of 137 pending claims");
+    const props = managerProps.current as {
+      claims: Array<Record<string, unknown>>;
+    };
+    expect(props.claims).toHaveLength(100);
   });
 
   it.each(["OWNER", "ADMIN", "STAFF"])(

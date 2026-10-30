@@ -208,6 +208,7 @@ jobs:
       # Test-mode OWNER account on the CI development instance (scoped
       # to this job; the account exists only on that throwaway instance).
       CLERK_E2E_OWNER_EMAIL: ${{ secrets.CLERK_E2E_OWNER_EMAIL }}
+      CLERK_E2E_OWNER_PHONE: ${{ secrets.CLERK_E2E_OWNER_PHONE }}
     steps:
       - uses: actions/checkout@v4
 

@@ -29,6 +29,22 @@ export const AUDIT_EVENT_MEMBER_JOIN_REQUEST_APPROVED =
   "MEMBER_JOIN_REQUEST_APPROVED";
 export const AUDIT_EVENT_MEMBER_JOIN_REQUEST_REJECTED =
   "MEMBER_JOIN_REQUEST_REJECTED";
+export const AUDIT_EVENT_MEMBERSHIP_RENEWED = "MEMBERSHIP_RENEWED";
+// SaaS trial/subscription slice. Platform-admin mutations write these in
+// the same transaction as the mutation itself. Metadata never carries a
+// full phone number, a secret, or another tenant's data — phone values
+// appear only masked (see saas-phone.ts).
+export const AUDIT_EVENT_SAAS_TRIAL_GRANTED = "SAAS_TRIAL_GRANTED";
+export const AUDIT_EVENT_SAAS_TRIAL_EXTENDED = "SAAS_TRIAL_EXTENDED";
+export const AUDIT_EVENT_SAAS_PAYMENT_RECORDED = "SAAS_PAYMENT_RECORDED";
+export const AUDIT_EVENT_SAAS_SUBSCRIPTION_SUSPENDED =
+  "SAAS_SUBSCRIPTION_SUSPENDED";
+export const AUDIT_EVENT_SAAS_SUBSCRIPTION_REACTIVATED =
+  "SAAS_SUBSCRIPTION_REACTIVATED";
+export const AUDIT_EVENT_SAAS_OFFER_REQUESTED = "SAAS_OFFER_REQUESTED";
+export const AUDIT_EVENT_SAAS_OFFER_APPROVED = "SAAS_OFFER_APPROVED";
+export const AUDIT_EVENT_SAAS_OFFER_DECLINED = "SAAS_OFFER_DECLINED";
+export const AUDIT_EVENT_SAAS_OFFER_ACCEPTED = "SAAS_OFFER_ACCEPTED";
 
 export interface AuditEventInput {
   organizationId: string;

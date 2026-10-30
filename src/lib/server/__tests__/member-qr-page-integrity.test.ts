@@ -23,8 +23,11 @@ const PAGE = read("src/app/app/org/attendance/qr/page.tsx");
  */
 describe("gym QR page", () => {
   it("resolves the organization from the server-side context only", () => {
-    expect(PAGE).toMatch(/requireOrganizationContext/);
-    expect(PAGE).toMatch(/from "@\/lib\/server\/authorization"/);
+    // Entitlement wrapper (trial/subscription slice): it resolves the
+    // same server-side organization context as before, then additionally
+    // redirects restricted gyms to the subscription screen.
+    expect(PAGE).toMatch(/requireEntitledOrganizationContext/);
+    expect(PAGE).toMatch(/from "@\/lib\/server\/subscriptions"/);
     expect(PAGE).not.toMatch(/searchParams/);
     expect(PAGE).not.toMatch(/params/);
   });

@@ -132,6 +132,16 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         select: { id: true },
       });
       createdOrgIds.push(org.id);
+      // SaaS trial fixture: gyms created through onboarding carry a
+      // live trial subscription; direct seeds must too, or the
+      // entitlement guard (fail closed) blocks the mutations under test.
+      await db.organizationSubscription.create({
+        data: {
+          organizationId: org.id,
+          trialStartedAt: new Date(),
+          trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        },
+      });
       const owner = await db.user.create({
         data: { clerkUserId: `rev-owner-${tag}-${suffix}` },
         select: { id: true },
@@ -630,10 +640,9 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         explanation: "Desk typo",
       });
 
-      const receipts = await listPaymentsForMembership(
-        gym.org.id,
-        gym.membership.id,
-      );
+      const { items: receipts, truncated: receiptsTruncated } =
+        await listPaymentsForMembership(gym.org.id, gym.membership.id);
+      expect(receiptsTruncated).toBe(false);
       expect(receipts).toHaveLength(1);
       expect(receipts[0]).toMatchObject({
         id: paymentId,
@@ -647,16 +656,15 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         reason: "OTHER",
         explanation: "",
       });
-      const receiptsAfter = await listPaymentsForMembership(
+      const { items: receiptsAfter } = await listPaymentsForMembership(
         gym.org.id,
         gym.membership.id,
       );
       expect(receiptsAfter[0]?.remainingReversiblePaise).toBe(0);
 
-      const reversals = await listReversalsForMembership(
-        gym.org.id,
-        gym.membership.id,
-      );
+      const { items: reversals, truncated: reversalsTruncated } =
+        await listReversalsForMembership(gym.org.id, gym.membership.id);
+      expect(reversalsTruncated).toBe(false);
       expect(reversals).toHaveLength(2);
       // Newest first.
       expect(reversals[0]).toMatchObject({

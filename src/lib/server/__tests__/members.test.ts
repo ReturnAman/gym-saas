@@ -15,6 +15,7 @@ const {
   mockPaymentFindMany,
   mockPaymentReversalGroupBy,
   mockPaymentReversalFindMany,
+  mockPaymentClaimGroupBy,
 } = vi.hoisted(() => ({
   mockTransaction: vi.fn(),
   mockOrgMembershipFindFirst: vi.fn(),
@@ -29,10 +30,12 @@ const {
   mockPaymentFindMany: vi.fn(),
   mockPaymentReversalGroupBy: vi.fn(),
   mockPaymentReversalFindMany: vi.fn(),
+  mockPaymentClaimGroupBy: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
   db: {
+    organizationSubscription: { findUnique: vi.fn(async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) })) },
     organizationMembership: {
       findFirst: mockOrgMembershipFindFirst,
       findMany: mockOrgMembershipFindMany,
@@ -45,6 +48,7 @@ vi.mock("@/lib/server/db", () => ({
       count: mockMemberCount,
     },
     payment: { groupBy: mockPaymentGroupBy, findMany: mockPaymentFindMany },
+    paymentClaim: { groupBy: mockPaymentClaimGroupBy },
     paymentReversal: {
       groupBy: mockPaymentReversalGroupBy,
       findMany: mockPaymentReversalFindMany,
@@ -105,6 +109,7 @@ function mockSuccessfulCreate() {
   mockMembershipCreate.mockResolvedValue({ id: "membership-id" });
   mockTransaction.mockImplementation(async (cb: never) =>
     (cb as (tx: unknown) => Promise<unknown>)({
+      organizationSubscription: { findUnique: async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) }) },
       // The member-decision advisory lock is a no-op in this mock:
       // these tests pin validation/authorization behaviour, and the
       // lock's serialization is covered on a real database.
@@ -123,6 +128,7 @@ beforeEach(() => {
   mockPaymentFindMany.mockResolvedValue([]);
   mockPaymentReversalGroupBy.mockResolvedValue([]);
   mockPaymentReversalFindMany.mockResolvedValue([]);
+  mockPaymentClaimGroupBy.mockResolvedValue([]);
   mockOrgMembershipFindMany.mockResolvedValue([]);
 });
 
@@ -135,6 +141,7 @@ describe("getMemberPermissions", () => {
         canEdit: true,
         canRecordPayment: true,
         canReversePayment: true,
+        canRenewMembership: true,
       });
     }
   });
@@ -146,6 +153,7 @@ describe("getMemberPermissions", () => {
       canEdit: true,
       canRecordPayment: true,
       canReversePayment: false,
+      canRenewMembership: true,
     });
   });
 
@@ -156,6 +164,7 @@ describe("getMemberPermissions", () => {
       canEdit: false,
       canRecordPayment: false,
       canReversePayment: false,
+      canRenewMembership: false,
     });
   });
 
@@ -166,6 +175,7 @@ describe("getMemberPermissions", () => {
       canEdit: false,
       canRecordPayment: false,
       canReversePayment: false,
+      canRenewMembership: false,
     });
   });
 });

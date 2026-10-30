@@ -6,7 +6,7 @@ import {
   formatDate,
   formatInr,
 } from "@/lib/members";
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import { getMemberDetail } from "@/lib/server/members";
 
 import { ReversePaymentForm } from "./reverse-form";
@@ -27,7 +27,7 @@ export default async function ReversePaymentPage({
 }: {
   params: Promise<{ id: string; paymentId: string }>;
 }) {
-  const { user } = await requireOrganizationContext();
+  const { user } = await requireEntitledOrganizationContext();
   const { id, paymentId } = await params;
   const detail = await getMemberDetail(user.id, id);
   if (!detail || !detail.membership) {

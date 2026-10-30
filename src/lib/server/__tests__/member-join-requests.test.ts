@@ -227,6 +227,15 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
         return row;
       },
     },
+    // SaaS trial fixture: the entitlement guard reads a live trial for
+    // the gym under test, mirroring what onboarding creates.
+    organizationSubscription: {
+      findUnique: async () => ({
+        suspendedAt: null,
+        paidThroughAt: null,
+        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+      }),
+    },
   };
 
   let chain: Promise<unknown> = Promise.resolve();
@@ -259,6 +268,14 @@ const { fakeDb, state, flags, resetFake } = vi.hoisted(() => {
         );
         return row ? { ...row, organization: { id: row.organizationId } } : null;
       },
+    },
+    // Same live-trial fixture for the in-transaction guard.
+    organizationSubscription: {
+      findUnique: async () => ({
+        suspendedAt: null,
+        paidThroughAt: null,
+        trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+      }),
     },
   };
 

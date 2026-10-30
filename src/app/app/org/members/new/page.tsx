@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import { getMemberPermissions } from "@/lib/server/members";
 
 import { MemberForm } from "../member-form";
@@ -12,7 +12,7 @@ import { MemberForm } from "../member-form";
  * the server action enforces this regardless of the UI.
  */
 export default async function NewMemberPage() {
-  const { membership } = await requireOrganizationContext();
+  const { membership } = await requireEntitledOrganizationContext();
   if (!getMemberPermissions(membership.role).canCreate) {
     redirect("/app/org/members");
   }

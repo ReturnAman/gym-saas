@@ -14,6 +14,7 @@ const {
 
 vi.mock("@/lib/server/db", () => ({
   db: {
+    organizationSubscription: { findUnique: vi.fn(async () => ({ suspendedAt: null, paidThroughAt: null, trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000) })) },
     organizationMembership: { findFirst: mockFindFirst },
     organization: { update: mockOrgUpdate },
   },

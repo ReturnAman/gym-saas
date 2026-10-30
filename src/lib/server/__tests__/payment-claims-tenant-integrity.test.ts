@@ -28,6 +28,7 @@ import {
   hashMemberSessionToken,
 } from "@/lib/server/member-session";
 import {
+  PENDING_CLAIMS_QUEUE_LIMIT,
   PaymentClaimAuthorizationError,
   PaymentClaimConflictError,
   PaymentClaimDuplicateError,
@@ -126,6 +127,16 @@ describe("payment claim tenant integrity", () => {
           select: { id: true },
         });
         createdOrgIds.push(org.id);
+      // SaaS trial fixture: gyms created through onboarding carry a
+      // live trial subscription; direct seeds must too, or the
+      // entitlement guard (fail closed) blocks the mutations under test.
+      await db.organizationSubscription.create({
+        data: {
+          organizationId: org.id,
+          trialStartedAt: new Date(),
+          trialEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+        },
+      });
         const owner = await seedUser(`owner-${tag}`);
         await db.organizationMembership.create({
           data: { userId: owner.id, organizationId: org.id, role: "OWNER" },
@@ -743,7 +754,9 @@ describe("payment claim tenant integrity", () => {
           const c2 = await submitPaymentClaim(m2.scope, claimInput("1000"));
           await submitPaymentClaim(mb.scope, claimInput("700"));
 
-          const queue = await listPendingClaimsForReview(staffA.id);
+          const { claims: queue, totalPending } =
+            await listPendingClaimsForReview(staffA.id);
+          expect(totalPending).toBe(2);
           // Only gym A's claims, oldest first — gym B's claim never appears.
           expect(queue.map((claim) => claim.id)).toEqual([
             c1.claimId,
@@ -781,7 +794,11 @@ describe("payment claim tenant integrity", () => {
           });
           await confirmPaymentClaim(staffA.id, first.claimId);
 
-          const history = await listClaimsForMember(staffA.id, m.member.id);
+          const { items: history, truncated } = await listClaimsForMember(
+            staffA.id,
+            m.member.id,
+          );
+          expect(truncated).toBe(false);
           expect(history.map((claim) => claim.id)).toEqual([
             second.claimId,
             first.claimId,
@@ -820,6 +837,59 @@ describe("payment claim tenant integrity", () => {
           await expect(
             listClaimsForMember(trainer.id, m.member.id),
           ).rejects.toBeInstanceOf(PaymentClaimAuthorizationError);
+        });
+
+        it("bounds the review queue per tenant while reporting the exact total", async () => {
+          const a = await seedGym("S1CAP");
+          const b = await seedGym("S1CAP2");
+          const staffA = await seedStaff(a.org.id, "S1CAP");
+          const staffB = await seedStaff(b.org.id, "S1CAP-b");
+          const mA = await seedMember(a.org.id, "S1CAP");
+          const mB = await seedMember(b.org.id, "S1CAP-b");
+
+          // 105 pending claims in gym A, inserted directly: the
+          // per-membership pending cap is a submission rule, not a
+          // storage rule, and no other flow can grow a queue this far
+          // in a test. Distinct references keep the
+          // no-duplicate-pending partial unique index satisfied;
+          // createdAt rises minute by minute so FIFO order is exact.
+          const base = Date.UTC(2026, 9, 1, 0, 0, 0);
+          const seedPending = (
+            orgId: string,
+            memberId: string,
+            membershipId: string,
+            prefix: string,
+            count: number,
+          ) =>
+            db.paymentClaim.createMany({
+              data: Array.from({ length: count }, (_, i) => ({
+                organizationId: orgId,
+                memberId,
+                membershipId,
+                claimedAmount: new Prisma.Decimal("100"),
+                paymentMethod: "UPI" as const,
+                reference: `${prefix}-${i}`,
+                status: "PENDING" as const,
+                createdAt: new Date(base + i * 60_000),
+              })),
+            });
+          await seedPending(a.org.id, mA.member.id, mA.membership.id, "Q", 105);
+          await seedPending(b.org.id, mB.member.id, mB.membership.id, "QB", 3);
+
+          const queueA = await listPendingClaimsForReview(staffA.id);
+          expect(queueA.totalPending).toBe(105);
+          expect(queueA.claims).toHaveLength(PENDING_CLAIMS_QUEUE_LIMIT);
+          // FIFO: the displayed page is exactly the oldest 100, in order.
+          expect(queueA.claims[0]?.reference).toBe("Q-0");
+          expect(queueA.claims[PENDING_CLAIMS_QUEUE_LIMIT - 1]?.reference).toBe(
+            "Q-99",
+          );
+
+          // Gym B's queue is untouched by gym A's backlog — the bound
+          // and the total are per-tenant.
+          const queueB = await listPendingClaimsForReview(staffB.id);
+          expect(queueB.totalPending).toBe(3);
+          expect(queueB.claims).toHaveLength(3);
         });
       });
     },

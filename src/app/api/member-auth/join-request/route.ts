@@ -18,6 +18,7 @@ import {
   MemberJoinRequestValidationError,
 } from "@/lib/server/member-join-requests";
 import { isSameOriginRequest } from "@/lib/server/member-session";
+import { SubscriptionRestrictedError } from "@/lib/server/subscriptions";
 
 /**
  * POST /api/member-auth/join-request — submit a request to join a gym.
@@ -115,6 +116,18 @@ export async function POST(request: Request) {
     }
     if (error instanceof MemberJoinRequestError) {
       return genericFailure();
+    }
+    if (error instanceof SubscriptionRestrictedError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "SUBSCRIPTION_RESTRICTED",
+            message:
+              "This gym is not accepting new requests right now. Please ask the gym for help.",
+          },
+        },
+        { status: 403 },
+      );
     }
     if (classifyDatabaseError(error)) {
       logDatabaseFailure({

@@ -10,7 +10,7 @@ import {
   formatDate,
   formatInr,
 } from "@/lib/members";
-import { requireMemberContext } from "@/lib/server/member-session";
+import { requireEntitledMemberContext } from "@/lib/server/subscriptions";
 import {
   getOwnMembershipSummary,
   listOwnPaymentClaims,
@@ -51,7 +51,7 @@ function claimLine(claim: PaymentClaimView) {
 }
 
 export default async function MemberPaymentsPage() {
-  const context = await requireMemberContext();
+  const context = await requireEntitledMemberContext();
 
   if (!context.member) {
     return (

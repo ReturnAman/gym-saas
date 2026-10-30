@@ -1,7 +1,8 @@
 import Link from "next/link";
 
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
+  PENDING_CLAIMS_QUEUE_LIMIT,
   PaymentClaimAuthorizationError,
   canVerifyPaymentClaim,
   listPendingClaimsForReview,
@@ -15,7 +16,7 @@ import styles from "./payment-claims.module.css";
  * Staff payment claim review for the actor's gym.
  *
  * Requires authentication AND organization membership (via
- * requireOrganizationContext). The organization is the actor's primary
+ * requireEntitledOrganizationContext). The organization is the actor's primary
  * gym — the same server-side resolution every org page uses; there is
  * no gym switcher yet, and the header says so while naming the gym
  * prominently. Reviewing is OWNER / ADMIN / STAFF (the service
@@ -43,7 +44,7 @@ function toRow(claim: PendingClaimReviewView): ClaimReviewRow {
 
 export default async function PaymentClaimsPage() {
   const { user, membership, organization } =
-    await requireOrganizationContext();
+    await requireEntitledOrganizationContext();
 
   const header = (
     <header className={styles.header}>
@@ -79,8 +80,11 @@ export default async function PaymentClaimsPage() {
   }
 
   let claims: PendingClaimReviewView[];
+  let totalPending: number;
   try {
-    claims = await listPendingClaimsForReview(user.id);
+    const queue = await listPendingClaimsForReview(user.id);
+    claims = queue.claims;
+    totalPending = queue.totalPending;
   } catch (error) {
     if (error instanceof PaymentClaimAuthorizationError) {
       return noAccess;
@@ -100,7 +104,14 @@ export default async function PaymentClaimsPage() {
           </p>
         </section>
       ) : (
-        <ClaimsManager claims={claims.map(toRow)} />
+        <>
+          {totalPending > claims.length && (
+            <p className={styles.gymNote} role="status">
+              {`Showing the oldest ${PENDING_CLAIMS_QUEUE_LIMIT} of ${totalPending} pending claims. Claims are verified oldest first — the rest will appear as you work through the queue.`}
+            </p>
+          )}
+          <ClaimsManager claims={claims.map(toRow)} />
+        </>
       )}
     </main>
   );

@@ -5,6 +5,7 @@ import {
   E2E_GYM_NAME,
   OWNER_STORAGE_STATE,
   requireOwnerEmail,
+  requireOwnerPhone,
 } from "./fixtures";
 
 /**
@@ -78,6 +79,9 @@ setup("authenticate as OWNER and create the gym", async ({ page }) => {
 
   if (settled === "form") {
     await gymNameField.fill(E2E_GYM_NAME);
+    await page
+      .getByLabel("Mobile number (India)")
+      .fill(requireOwnerPhone());
     await page.getByRole("button", { name: "Create gym" }).click();
     await page.waitForURL(/\/app(\/|$)/);
   }

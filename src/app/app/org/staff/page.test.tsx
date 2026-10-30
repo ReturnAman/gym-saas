@@ -28,8 +28,8 @@ vi.mock("next/link", () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
-vi.mock("@/lib/server/authorization", () => ({
-  requireOrganizationContext: mockContext,
+vi.mock("@/lib/server/subscriptions", () => ({
+  requireEntitledOrganizationContext: mockContext,
 }));
 
 vi.mock("@/lib/server/staff", async () => {

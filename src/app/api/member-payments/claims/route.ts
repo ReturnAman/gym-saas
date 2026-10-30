@@ -25,6 +25,7 @@ import {
   memberClaimScope,
   submitPaymentClaim,
 } from "@/lib/server/payment-claims";
+import { SubscriptionRestrictedError } from "@/lib/server/subscriptions";
 
 /**
  * POST /api/member-payments/claims — a member tells their gym "I paid".
@@ -117,6 +118,18 @@ export async function POST(request: Request) {
           },
         },
         { status: 401 },
+      );
+    }
+    if (error instanceof SubscriptionRestrictedError) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "SUBSCRIPTION_RESTRICTED",
+            message:
+              "This gym's subscription is currently restricted. Please ask the gym for help.",
+          },
+        },
+        { status: 403 },
       );
     }
     if (error instanceof PaymentValidationError) {

@@ -1033,3 +1033,28 @@ Save it and commit:
 
 ```text
 docs: define database architecture
+
+# 5. SaaS subscription slice (implemented, branch `feature/saas-trial-subscriptions`)
+
+Migration `20261025125054_add_saas_subscriptions` (additive,
+data-preserving; see `docs/features/saas-trial-subscriptions.md`):
+
+- `organization_subscriptions`: one row per organization (unique
+  `organization_id`) carrying trial window, paid period,
+  suspension state/reason/actor, offer-prompt dismissal, and
+  timestamps. It is the subscription source of truth; the effective
+  state is derived from it at request time, never stored as a flag
+  that a scheduler must update.
+- `saas_trial_claims`: permanent one-trial ledger. Global unique
+  constraints on the stable Clerk owner identity and on the canonical
+  E.164 verified phone number (not organization-scoped, so neither a
+  second gym nor a second account can reclaim a trial). The
+  organization link is `ON DELETE RESTRICT`: deleting a gym never
+  releases its claim. Audit rows reference the claim only with a
+  masked phone.
+- `saas_subscription_payments`: manual, administrator-verified SaaS
+  revenue only — never the gym-member `Payment` model. Amount is
+  `DECIMAL(12,2)`; a per-organization idempotency key is unique.
+- `saas_offer_requests`: `REQUESTED/APPROVED/DECLINED/ACCEPTED`, a
+  partial unique index allowing one pending request per gym, and an
+  approval restricted to 5% or 10% (enforced in service code).

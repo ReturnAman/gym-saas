@@ -53,12 +53,35 @@ vi.mock("next/navigation", () => ({
   },
 }));
 
-vi.mock("@/lib/server/authorization", () => ({
-  requireOrganizationContext: mockRequireContext,
+vi.mock("@/lib/server/subscriptions", () => ({
+  requireEntitledOrganizationContext: mockRequireContext,
 }));
 
 vi.mock("@/lib/server/members", () => ({
+  PAST_MEMBERSHIPS_LIMIT: 10,
   getMemberDetail: mockGetMemberDetail,
+}));
+
+vi.mock("./renewal-form", () => ({
+  RenewalForm: (props: {
+    memberId: string;
+    defaultPlan: string;
+    defaultFeePaise: number;
+    newPeriodStartLabel: string;
+    suggestedExpiryDate: string;
+    pendingClaimsCount: number;
+  }) => (
+    <form
+      data-member={props.memberId}
+      data-plan={props.defaultPlan}
+      data-fee={props.defaultFeePaise}
+      data-start={props.newPeriodStartLabel}
+      data-expiry={props.suggestedExpiryDate}
+      data-pending={props.pendingClaimsCount}
+    >
+      Renew membership form
+    </form>
+  ),
 }));
 
 vi.mock("@/lib/server/attendance", () => ({
@@ -101,15 +124,21 @@ const DETAIL: MemberDetail = {
     outstandingPaise: 50_000,
     membershipStatus: "ACTIVE",
     paymentStatus: "PARTIALLY_PAID",
+    pendingClaimsCount: 0,
     payments: [],
+    paymentsTruncated: false,
     reversals: [],
+    reversalsTruncated: false,
   },
+  pastMemberships: [],
+  pastMembershipsTruncated: false,
   permissions: {
     canView: true,
     canCreate: false,
     canEdit: true,
     canRecordPayment: true,
     canReversePayment: true,
+    canRenewMembership: true,
   },
 };
 
@@ -178,7 +207,7 @@ async function renderDetail(role = "OWNER", id = "member-visible-1") {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetMemberDetail.mockResolvedValue(DETAIL);
-  mockListClaimsForMember.mockResolvedValue(CLAIMS);
+  mockListClaimsForMember.mockResolvedValue({ items: CLAIMS, truncated: false });
 });
 
 describe("member detail — claim history section (C3-S3)", () => {
@@ -223,7 +252,7 @@ describe("member detail — claim history section (C3-S3)", () => {
   });
 
   it("shows the empty state when the member has no claims", async () => {
-    mockListClaimsForMember.mockResolvedValue([]);
+    mockListClaimsForMember.mockResolvedValue({ items: [], truncated: false });
     const html = normalize(await renderDetail());
     expect(html).toContain("Payment claims");
     expect(html).toContain("No payment claims from this member yet.");
@@ -378,5 +407,148 @@ describe("member detail — unknown or foreign member", () => {
       MemberDetailPage({ params: Promise.resolve({ id: "foreign-1" }) }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(mockListClaimsForMember).not.toHaveBeenCalled();
+  });
+});
+
+describe("member detail — truncated histories (M1)", () => {
+  it("shows a latest-50 notice under each truncated table and none otherwise", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL_WITH_REVERSALS,
+      membership: {
+        ...DETAIL_WITH_REVERSALS.membership!,
+        paymentsTruncated: true,
+        reversalsTruncated: true,
+      },
+    });
+    mockListClaimsForMember.mockResolvedValue({
+      items: CLAIMS,
+      truncated: true,
+    });
+    const html = normalize(await renderDetail());
+    expect(html).toContain("only the tables below are shortened");
+    expect(html.match(/Showing the latest 50 records\./g)).toHaveLength(3);
+  });
+
+  it("shows no truncation notice when every history fits", async () => {
+    const html = normalize(await renderDetail());
+    expect(html).not.toContain("Showing the latest");
+  });
+});
+
+describe("member detail — renewal section", () => {
+  it("renders the renewal form for a role that may renew, wired to the current period", async () => {
+    const html = normalize(await renderDetail());
+    expect(html).toContain("Renew membership");
+    expect(html).toContain("Renew membership form");
+    expect(html).toContain('data-member="member-visible-1"');
+    expect(html).toContain('data-plan="MONTHLY"');
+    expect(html).toContain('data-fee="100000"');
+    expect(html).toContain('data-pending="0"');
+    // A suggested expiry is always supplied.
+    expect(html).toMatch(/data-expiry="\d{4}-\d{2}-\d{2}"/);
+  });
+
+  it("passes the pending-claim count through to the form", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL,
+      membership: { ...DETAIL.membership!, pendingClaimsCount: 3 },
+    });
+    const html = normalize(await renderDetail());
+    expect(html).toContain('data-pending="3"');
+  });
+
+  it("hides the renewal form when the role may not renew", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL,
+      permissions: { ...DETAIL.permissions, canRenewMembership: false },
+    });
+    const html = normalize(await renderDetail("TRAINER"));
+    expect(html).not.toContain("Renew membership form");
+    expect(html).not.toContain('aria-label="Renew membership"');
+    // The rest of the page is unaffected.
+    expect(html).toContain("Asha Rao");
+    expect(html).toContain("Membership");
+  });
+
+  it("hides the renewal form when there is no current membership", async () => {
+    mockGetMemberDetail.mockResolvedValue({ ...DETAIL, membership: null });
+    const html = normalize(await renderDetail());
+    expect(html).not.toContain("Renew membership form");
+    expect(html).toContain("No membership on record.");
+  });
+});
+
+const DETAIL_WITH_PAST: MemberDetail = {
+  ...DETAIL,
+  pastMemberships: [
+    {
+      id: "membership-secret-past",
+      plan: "THREE_MONTHS",
+      planLabel: "3 Months",
+      startDate: "2025-10-01",
+      expiryDate: "2026-01-01",
+      feePaise: 250_000,
+      paidPaise: 250_000,
+      outstandingPaise: 0,
+      membershipStatus: "EXPIRED",
+      paymentStatus: "PAID",
+      pendingClaimsCount: 1,
+      payments: [
+        {
+          id: "payment-secret-past",
+          amountPaise: 250_000,
+          paymentMethod: "UPI",
+          reference: "UTR-PAST-1",
+          confirmedAt: "2025-10-01T04:30:00.000Z",
+          confirmedByRole: "OWNER",
+          reversedPaise: 0,
+          remainingReversiblePaise: 250_000,
+        },
+      ],
+      paymentsTruncated: false,
+      reversals: [],
+      reversalsTruncated: false,
+    },
+  ],
+};
+
+describe("member detail — past memberships", () => {
+  beforeEach(() => {
+    mockGetMemberDetail.mockResolvedValue(DETAIL_WITH_PAST);
+  });
+
+  it("renders past periods read-only with their own balances and payment history", async () => {
+    const html = normalize(await renderDetail());
+    expect(html).toContain("Past memberships");
+    expect(html).toContain("3 Months");
+    expect(html).toContain("01/10/2025");
+    expect(html).toContain("01/01/2026");
+    expect(html).toContain("₹2,500");
+    expect(html).toContain("UTR-PAST-1");
+    expect(html).toContain(
+      "amounts never carry over between periods",
+    );
+    // Read-only: no Reverse link for the past period's payments, and
+    // no internal IDs as visible text.
+    expect(html).not.toContain(
+      "/payments/payment-secret-past/reverse",
+    );
+    expect(html).not.toContain("membership-secret-past");
+    expect(html).not.toContain("payment-secret-past");
+  });
+
+  it("is absent when the member has only one period", async () => {
+    mockGetMemberDetail.mockResolvedValue(DETAIL);
+    const html = normalize(await renderDetail());
+    expect(html).not.toContain("Past memberships");
+  });
+
+  it("shows the bounded-history notice when older periods were cut", async () => {
+    mockGetMemberDetail.mockResolvedValue({
+      ...DETAIL_WITH_PAST,
+      pastMembershipsTruncated: true,
+    });
+    const html = normalize(await renderDetail());
+    expect(html).toContain("Showing the 10 most recent past periods.");
   });
 });

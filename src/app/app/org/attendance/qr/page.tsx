@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import QRCode from "qrcode";
 
 import { buildMemberCheckInUrl } from "@/lib/attendance";
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import { canViewAttendance } from "@/lib/server/attendance";
 import { env } from "@/lib/server/env";
 
@@ -57,7 +57,7 @@ function resolveCheckInUrl(organizationId: string): string | null {
 }
 
 export default async function GymQrPage() {
-  const { organization, membership } = await requireOrganizationContext();
+  const { organization, membership } = await requireEntitledOrganizationContext();
   if (!canViewAttendance(membership.role)) {
     redirect("/app/org/attendance");
   }

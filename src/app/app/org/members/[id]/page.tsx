@@ -7,24 +7,32 @@ import {
   formatKolkataDateTime,
   formatKolkataTime,
 } from "@/lib/attendance";
-import { requireOrganizationContext } from "@/lib/server/authorization";
+import { requireEntitledOrganizationContext } from "@/lib/server/subscriptions";
 import {
   getAttendancePermissions,
   getOpenSession,
   listMemberAttendance,
 } from "@/lib/server/attendance";
-import { getMemberDetail } from "@/lib/server/members";
 import {
+  PAST_MEMBERSHIPS_LIMIT,
+  getMemberDetail,
+} from "@/lib/server/members";
+import {
+  CLAIM_HISTORY_LIMIT,
   PaymentClaimAuthorizationError,
   PaymentClaimNotFoundError,
   canVerifyPaymentClaim,
   listClaimsForMember,
+  type ClaimsForMember,
   type PaymentClaimView,
 } from "@/lib/server/payment-claims";
+import { PAYMENT_HISTORY_LIMIT } from "@/lib/server/payments";
 import {
   MEMBERSHIP_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   PAYMENT_STATUS_LABELS,
+  calculateExpiryDate,
+  deriveRenewalStartDate,
   formatDate,
   formatInr,
   parseDateInput,
@@ -33,6 +41,7 @@ import {
 } from "@/lib/members";
 
 import { CheckInForm } from "../../attendance/check-in-form";
+import { RenewalForm } from "./renewal-form";
 import { CheckOutForm } from "../../attendance/check-out-form";
 import styles from "../members.module.css";
 
@@ -76,7 +85,7 @@ function claimBadgeClass(status: PaymentClaimView["status"]): string {
 async function loadClaimHistory(
   userId: string,
   memberId: string,
-): Promise<PaymentClaimView[] | null> {
+): Promise<ClaimsForMember | null> {
   try {
     return await listClaimsForMember(userId, memberId);
   } catch (error) {
@@ -93,8 +102,11 @@ async function loadClaimHistory(
 /**
  * Member details (protected).
  *
- * Sections: Member, Membership, Financial, Payment claims, Attendance.
- * Payment claims (C3-S3) is a read-only history of the payments this
+ * Sections: Member, Membership, Renew membership, Financial, Past
+ * memberships, Payment claims, Attendance. Renew membership renders
+ * only for OWNER/ADMIN/STAFF with a current membership; Past
+ * memberships is the read-only history of earlier periods, each with
+ * its own payments and balance. Payment claims (C3-S3) is a read-only history of the payments this
  * member has reported, shown only to roles that may verify claims;
  * decisions are made in the claim review queue, never here. Attendance
  * (Slice 1) shows the member's current open session or a staff check-in
@@ -109,7 +121,7 @@ export default async function MemberDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { user, membership: orgMembership } = await requireOrganizationContext();
+  const { user, membership: orgMembership } = await requireEntitledOrganizationContext();
   const { id } = await params;
   const detail = await getMemberDetail(user.id, id);
   if (!detail) {
@@ -117,6 +129,21 @@ export default async function MemberDetailPage({
   }
 
   const membership = detail.membership;
+  // Renewal suggestion (display only): the chained start the service
+  // will derive, and the plan-duration expiry from it. The service
+  // re-derives the start and validates the staff-confirmed expiry —
+  // nothing here is authoritative.
+  const currentExpiry = membership
+    ? parseDateInput(membership.expiryDate)
+    : null;
+  const renewalStart =
+    currentExpiry && membership
+      ? deriveRenewalStartDate(currentExpiry)
+      : null;
+  const suggestedExpiry =
+    renewalStart && membership
+      ? calculateExpiryDate(renewalStart, membership.plan)
+      : null;
   const attendancePermissions = getAttendancePermissions(orgMembership.role);
   const [openSession, attendanceHistory] = await Promise.all([
     getOpenSession(user.id, detail.id),
@@ -176,6 +203,25 @@ export default async function MemberDetailPage({
           )}
         </section>
 
+        {detail.permissions.canRenewMembership &&
+          membership &&
+          renewalStart &&
+          suggestedExpiry && (
+            <section className={styles.section} aria-label="Renew membership">
+              <h2>Renew membership</h2>
+              <RenewalForm
+                memberId={detail.id}
+                defaultPlan={membership.plan}
+                defaultFeePaise={membership.feePaise}
+                newPeriodStartLabel={formatDate(renewalStart)}
+                suggestedExpiryDate={suggestedExpiry
+                  .toISOString()
+                  .slice(0, 10)}
+                pendingClaimsCount={membership.pendingClaimsCount}
+              />
+            </section>
+          )}
+
         <section className={styles.section} aria-label="Financial">
           <h2>Financial</h2>
           {membership ? (
@@ -207,6 +253,13 @@ export default async function MemberDetailPage({
               {membership.reversals.length > 0 && (
                 <p className={styles.hint}>
                   Paid is net of reversals — see Reversals below.
+                </p>
+              )}
+              {(membership.paymentsTruncated ||
+                membership.reversalsTruncated) && (
+                <p className={styles.hint}>
+                  Paid and outstanding above always cover the full history;
+                  only the tables below are shortened.
                 </p>
               )}
 
@@ -282,6 +335,11 @@ export default async function MemberDetailPage({
                   </table>
                 </div>
               )}
+              {membership.paymentsTruncated && (
+                <p className={styles.hint}>
+                  {`Showing the latest ${PAYMENT_HISTORY_LIMIT} records.`}
+                </p>
+              )}
 
               <h3>Reversals</h3>
               {membership.reversals.length === 0 ? (
@@ -316,6 +374,11 @@ export default async function MemberDetailPage({
                   </table>
                 </div>
               )}
+              {membership.reversalsTruncated && (
+                <p className={styles.hint}>
+                  {`Showing the latest ${PAYMENT_HISTORY_LIMIT} records.`}
+                </p>
+              )}
 
               {detail.permissions.canRecordPayment && (
                 <div className={styles.detailActions}>
@@ -333,6 +396,139 @@ export default async function MemberDetailPage({
           )}
         </section>
 
+        {detail.pastMemberships.length > 0 && (
+          <section className={styles.section} aria-label="Past memberships">
+            <h2>Past memberships</h2>
+            <p className={styles.hint}>
+              Earlier periods for this member. Each period keeps its own
+              fee, payments, and balance — amounts never carry over
+              between periods.
+            </p>
+            {detail.pastMemberships.map((past) => (
+              <div key={past.id}>
+                <h3>
+                  {past.planLabel} · {displayDate(past.startDate)} to{" "}
+                  {displayDate(past.expiryDate)}{" "}
+                  <span className={membershipBadgeClass(past.membershipStatus)}>
+                    {MEMBERSHIP_STATUS_LABELS[past.membershipStatus]}
+                  </span>
+                </h3>
+                <dl className={styles.details}>
+                  <div className={styles.detailRow}>
+                    <dt className={styles.term}>Total fee</dt>
+                    <dd className={styles.value}>{formatInr(past.feePaise)}</dd>
+                  </div>
+                  <div className={styles.detailRow}>
+                    <dt className={styles.term}>Paid</dt>
+                    <dd className={styles.value}>{formatInr(past.paidPaise)}</dd>
+                  </div>
+                  <div className={styles.detailRow}>
+                    <dt className={styles.term}>Outstanding</dt>
+                    <dd className={styles.value}>
+                      {formatInr(past.outstandingPaise)}
+                    </dd>
+                  </div>
+                  <div className={styles.detailRow}>
+                    <dt className={styles.term}>Payment status</dt>
+                    <dd className={styles.value}>
+                      <span className={paymentBadgeClass(past.paymentStatus)}>
+                        {PAYMENT_STATUS_LABELS[past.paymentStatus]}
+                      </span>
+                    </dd>
+                  </div>
+                </dl>
+
+                {past.payments.length === 0 ? (
+                  <p className={styles.empty}>
+                    No payments recorded for this period.
+                  </p>
+                ) : (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th scope="col">Amount</th>
+                          <th scope="col">Reversed</th>
+                          <th scope="col">Method</th>
+                          <th scope="col">Reference</th>
+                          <th scope="col">Date</th>
+                          <th scope="col">Confirmed by</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {past.payments.map((payment) => (
+                          <tr key={payment.id}>
+                            <td>{formatInr(payment.amountPaise)}</td>
+                            <td>
+                              {payment.reversedPaise > 0
+                                ? formatInr(payment.reversedPaise)
+                                : "—"}
+                            </td>
+                            <td>{PAYMENT_METHOD_LABELS[payment.paymentMethod]}</td>
+                            <td>
+                              {payment.reference ?? (
+                                <span className={styles.empty}>—</span>
+                              )}
+                            </td>
+                            <td>{formatDate(new Date(payment.confirmedAt))}</td>
+                            <td>{payment.confirmedByRole ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {past.paymentsTruncated && (
+                  <p className={styles.hint}>
+                    {`Showing the latest ${PAYMENT_HISTORY_LIMIT} records for this period.`}
+                  </p>
+                )}
+
+                {past.reversals.length > 0 && (
+                  <div className={styles.tableWrap}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th scope="col">Amount reversed</th>
+                          <th scope="col">Reason</th>
+                          <th scope="col">Explanation</th>
+                          <th scope="col">Date</th>
+                          <th scope="col">Reversed by</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {past.reversals.map((reversal) => (
+                          <tr key={reversal.id}>
+                            <td>{formatInr(reversal.amountPaise)}</td>
+                            <td>{reversal.reason}</td>
+                            <td>
+                              {reversal.explanation ?? (
+                                <span className={styles.empty}>—</span>
+                              )}
+                            </td>
+                            <td>{formatDate(new Date(reversal.reversedAt))}</td>
+                            <td>{reversal.reversedByRole ?? "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {past.reversalsTruncated && (
+                  <p className={styles.hint}>
+                    {`Showing the latest ${PAYMENT_HISTORY_LIMIT} reversals for this period.`}
+                  </p>
+                )}
+              </div>
+            ))}
+            {detail.pastMembershipsTruncated && (
+              <p className={styles.hint}>
+                {`Showing the ${PAST_MEMBERSHIPS_LIMIT} most recent past periods.`}
+              </p>
+            )}
+          </section>
+        )}
+
         {claimHistory !== null && (
           <section className={styles.section} aria-label="Payment claims">
             <h2>Payment claims</h2>
@@ -343,7 +539,7 @@ export default async function MemberDetailPage({
               the{" "}
               <Link href="/app/org/payment-claims">payment claims queue</Link>.
             </p>
-            {claimHistory.length === 0 ? (
+            {claimHistory.items.length === 0 ? (
               <p className={styles.empty}>
                 No payment claims from this member yet.
               </p>
@@ -361,7 +557,7 @@ export default async function MemberDetailPage({
                     </tr>
                   </thead>
                   <tbody>
-                    {claimHistory.map((claim) => (
+                    {claimHistory.items.map((claim) => (
                       <tr key={claim.id}>
                         <td>{formatInr(claim.claimedAmountPaise)}</td>
                         <td>{PAYMENT_METHOD_LABELS[claim.paymentMethod]}</td>
@@ -387,6 +583,11 @@ export default async function MemberDetailPage({
                   </tbody>
                 </table>
               </div>
+            )}
+            {claimHistory.truncated && (
+              <p className={styles.hint}>
+                {`Showing the latest ${CLAIM_HISTORY_LIMIT} records.`}
+              </p>
             )}
           </section>
         )}

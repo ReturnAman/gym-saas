@@ -235,6 +235,9 @@ export interface AdminOrganizationRow {
   latestPayment: SaasSubscriptionPayment | null;
 }
 
+/** Fixed page size for the overview list — the listing is bounded. */
+export const ADMIN_OVERVIEW_PAGE_SIZE = 50;
+
 export interface AdminOverview {
   metrics: {
     activeTrials: number;
@@ -244,36 +247,62 @@ export interface AdminOverview {
     totalOrganizations: number;
   };
   organizations: AdminOrganizationRow[];
+  /** Organizations matching the search filter, across all pages. */
+  totalMatching: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 }
 
 /**
- * Real database-backed overview: metrics are counted from live
- * subscription rows (never seeded or fabricated), and the list carries
- * the data the dashboard renders. Search matches gym names
- * case-insensitively; an empty query lists everything, newest first.
+ * Real database-backed overview: metrics are counted from live rows
+ * (never seeded or fabricated), and the list carries the data the
+ * dashboard renders. Search matches gym names case-insensitively; an
+ * empty query lists everything, newest first.
+ *
+ * The list is paginated (ADMIN_OVERVIEW_PAGE_SIZE rows per page, with
+ * the id as a tie-break so page boundaries are stable when
+ * organizations share a creation timestamp); totalMatching counts the
+ * same search filter across all pages. Metrics stay global: a search
+ * narrows the list, never the headline counts.
+ *
+ * Organizations without a subscription row are real organizations:
+ * they count toward totalOrganizations, and because their effective
+ * state resolves to PENDING_PAYMENT (see resolveEffectiveState) they
+ * also count toward awaitingPayment.
  */
 export async function getPlatformAdminOverview(
   search: string,
+  page: number = 1,
 ): Promise<AdminOverview> {
   const now = new Date();
   const query = search.trim();
-  const organizations = await db.organization.findMany({
-    where: query
-      ? { name: { contains: query, mode: "insensitive" } }
-      : undefined,
-    include: {
-      subscription: true,
-      memberships: {
-        where: { role: "OWNER" },
-        include: { user: true },
-        orderBy: { createdAt: "asc" },
-        take: 1,
+  const currentPage = Number.isFinite(page)
+    ? Math.max(1, Math.floor(page))
+    : 1;
+  const where: Prisma.OrganizationWhereInput | undefined = query
+    ? { name: { contains: query, mode: "insensitive" } }
+    : undefined;
+  const [organizations, totalMatching] = await Promise.all([
+    db.organization.findMany({
+      where,
+      include: {
+        subscription: true,
+        memberships: {
+          where: { role: "OWNER" },
+          include: { user: true },
+          orderBy: { createdAt: "asc" },
+          take: 1,
+        },
+        saasOffers: { orderBy: { requestedAt: "desc" }, take: 1 },
+        saasPayments: { orderBy: { receivedAt: "desc" }, take: 1 },
       },
-      saasOffers: { orderBy: { requestedAt: "desc" }, take: 1 },
-      saasPayments: { orderBy: { receivedAt: "desc" }, take: 1 },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (currentPage - 1) * ADMIN_OVERVIEW_PAGE_SIZE,
+      take: ADMIN_OVERVIEW_PAGE_SIZE,
+    }),
+    db.organization.count({ where }),
+  ]);
 
   const ownerClerkIds = organizations
     .map((org) => org.memberships[0]?.user.clerkUserId)
@@ -304,20 +333,29 @@ export async function getPlatformAdminOverview(
     };
   });
 
-  // Metrics are global, not filtered: a search narrows the list below but
+  // Metrics are global, not filtered: a search narrows the list above but
   // must not change the headline counts. Only the three window fields are
   // loaded for this pass (resolveEffectiveState needs nothing else).
-  const allSubscriptions = await db.organizationSubscription.findMany({
-    select: { suspendedAt: true, paidThroughAt: true, trialEndsAt: true },
-  });
+  const [totalOrganizations, allSubscriptions] = await Promise.all([
+    db.organization.count(),
+    db.organizationSubscription.findMany({
+      select: { suspendedAt: true, paidThroughAt: true, trialEndsAt: true },
+    }),
+  ]);
   const allStates = allSubscriptions.map((s) =>
     resolveEffectiveState(s, now),
   );
+  // Subscription rows are unique per organization, so the difference is
+  // exactly the organizations with no row. Their effective state is
+  // PENDING_PAYMENT, so they belong in awaitingPayment as well as in
+  // the total.
+  const withoutSubscription = totalOrganizations - allSubscriptions.length;
   return {
     metrics: {
       activeTrials: allStates.filter((s) => s === "TRIAL_ACTIVE").length,
-      awaitingPayment: allStates.filter((s) => s === "PENDING_PAYMENT")
-        .length,
+      awaitingPayment:
+        allStates.filter((s) => s === "PENDING_PAYMENT").length +
+        withoutSubscription,
       expiringWithin48Hours: allSubscriptions.filter((s) => {
         const state = resolveEffectiveState(s, now);
         return (
@@ -329,9 +367,16 @@ export async function getPlatformAdminOverview(
       expiredOrSuspended: allStates.filter(
         (s) => s === "EXPIRED" || s === "SUSPENDED",
       ).length,
-      totalOrganizations: allStates.length,
+      totalOrganizations,
     },
     organizations: rows,
+    totalMatching,
+    page: currentPage,
+    pageSize: ADMIN_OVERVIEW_PAGE_SIZE,
+    totalPages: Math.max(
+      1,
+      Math.ceil(totalMatching / ADMIN_OVERVIEW_PAGE_SIZE),
+    ),
   };
 }
 

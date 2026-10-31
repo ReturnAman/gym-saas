@@ -3,6 +3,15 @@
 import { redirect } from "next/navigation";
 
 import {
+  classifyDatabaseError,
+  mayHaveCommitted,
+} from "@/lib/server/db-errors";
+import {
+  logDatabaseFailure,
+  logUnexpectedError,
+} from "@/lib/server/logger";
+import {
+  PlatformAdminAuthorizationError,
   PlatformAdminValidationError,
   extendTrial,
   reactivateOrganization,
@@ -22,6 +31,11 @@ import {
  * mutation. Failures redirect back to the detail page with a `notice`
  * message; successes redirect with a confirmation notice. Suspension
  * requires an explicit confirmation checkbox.
+ *
+ * Failure notices come from failureNotice below: curated domain errors
+ * surface their message exactly; unexpected failures are logged once,
+ * structured, and answered with a safe generic notice — a raw internal
+ * error message never reaches the page.
  */
 
 function detailRedirect(organizationId: string, notice: string): never {
@@ -34,9 +48,52 @@ function formString(formData: FormData, name: string): string {
   return String(formData.get(name) ?? "");
 }
 
+/**
+ * Convert a failed admin action into the notice shown on the detail
+ * page (the H2/H3 boundary convention, as in the member payment
+ * actions). Validation errors — including idempotency conflicts — and
+ * authorization errors carry messages written for the administrator
+ * and are preserved exactly. A recognized database failure is logged
+ * via logDatabaseFailure; anything else via logUnexpectedError —
+ * exactly one structured log per failure, and the notice stays free
+ * of internal detail.
+ *
+ * `ambiguousNotice` is passed only by actions that record money: when
+ * the connection died around the write, the change may have committed
+ * despite the failure, so the notice directs the admin to the
+ * persisted state on the detail page instead of inviting a retry.
+ */
+function failureNotice(
+  error: unknown,
+  boundary: string,
+  genericNotice: string,
+  options: { notRecordedNotice: string; ambiguousNotice?: string },
+): string {
+  if (
+    error instanceof PlatformAdminValidationError ||
+    error instanceof PlatformAdminAuthorizationError
+  ) {
+    return error.message;
+  }
+  if (options.ambiguousNotice !== undefined && mayHaveCommitted(error)) {
+    logDatabaseFailure({ boundary, error });
+    return options.ambiguousNotice;
+  }
+  if (classifyDatabaseError(error)) {
+    logDatabaseFailure({ boundary, error });
+    return options.notRecordedNotice;
+  }
+  logUnexpectedError({ boundary, error });
+  return genericNotice;
+}
+
 export async function recordPaymentAction(formData: FormData): Promise<void> {
   const admin = await requirePlatformAdmin();
   const organizationId = formString(formData, "organizationId");
+  // The redirect is issued after the try/catch, never inside it:
+  // redirect() works by throwing, and a redirect thrown inside the try
+  // would be caught here and converted into a failure notice.
+  let notice: string;
   try {
     const { state } = await recordSaasPaymentAndActivate(admin, {
       organizationId,
@@ -54,16 +111,21 @@ export async function recordPaymentAction(formData: FormData): Promise<void> {
       // without deduplication protection.
       idempotencyKey: formString(formData, "idempotencyKey") || undefined,
     });
-    detailRedirect(
-      organizationId,
-      `Payment recorded. Resulting subscription state: ${state}.`,
-    );
+    notice = `Payment recorded. Resulting subscription state: ${state}.`;
   } catch (error) {
-    detailRedirect(
-      organizationId,
-      error instanceof Error ? error.message : "Could not record payment.",
+    notice = failureNotice(
+      error,
+      "action:platformAdmin.recordPayment",
+      "Could not record payment.",
+      {
+        notRecordedNotice:
+          "The database didn't respond in time, so this payment was not recorded. Please try again.",
+        ambiguousNotice:
+          "We couldn't confirm whether this payment was recorded — the database connection was interrupted. Please check the payments listed on this page before recording it again.",
+      },
     );
   }
+  detailRedirect(organizationId, notice);
 }
 
 export async function suspendAction(formData: FormData): Promise<void> {
@@ -72,45 +134,57 @@ export async function suspendAction(formData: FormData): Promise<void> {
   if (formString(formData, "confirm") !== "on") {
     detailRedirect(organizationId, "Confirm the suspension first.");
   }
+  let notice: string;
   try {
     await suspendOrganization(admin, {
       organizationId,
       reason: formString(formData, "reason"),
     });
-    detailRedirect(organizationId, "Gym suspended.");
+    notice = "Gym suspended.";
   } catch (error) {
-    detailRedirect(
-      organizationId,
-      error instanceof Error ? error.message : "Could not suspend gym.",
+    notice = failureNotice(
+      error,
+      "action:platformAdmin.suspend",
+      "Could not suspend gym.",
+      {
+        notRecordedNotice:
+          "The database didn't respond in time, so this gym was not suspended. Please try again.",
+      },
     );
   }
+  detailRedirect(organizationId, notice);
 }
 
 export async function extendTrialAction(formData: FormData): Promise<void> {
   const admin = await requirePlatformAdmin();
   const organizationId = formString(formData, "organizationId");
+  let notice: string;
   try {
     const { trialEndsAt } = await extendTrial(admin, {
       organizationId,
       days: formString(formData, "days"),
       reason: formString(formData, "reason"),
     });
-    detailRedirect(
-      organizationId,
-      `Trial extended to ${trialEndsAt.toISOString()}.`,
-    );
+    notice = `Trial extended to ${trialEndsAt.toISOString()}.`;
   } catch (error) {
-    detailRedirect(
-      organizationId,
-      error instanceof Error ? error.message : "Could not extend trial.",
+    notice = failureNotice(
+      error,
+      "action:platformAdmin.extendTrial",
+      "Could not extend trial.",
+      {
+        notRecordedNotice:
+          "The database didn't respond in time, so the trial was not extended. Please try again.",
+      },
     );
   }
+  detailRedirect(organizationId, notice);
 }
 
 export async function reactivateAction(formData: FormData): Promise<void> {
   const admin = await requirePlatformAdmin();
   const organizationId = formString(formData, "organizationId");
   const withPayment = formString(formData, "withPayment") === "on";
+  let notice: string;
   try {
     await reactivateOrganization(admin, {
       organizationId,
@@ -132,13 +206,21 @@ export async function reactivateAction(formData: FormData): Promise<void> {
           }
         : null,
     });
-    detailRedirect(organizationId, "Gym reactivated.");
+    notice = "Gym reactivated.";
   } catch (error) {
-    detailRedirect(
-      organizationId,
-      error instanceof Error ? error.message : "Could not reactivate gym.",
+    notice = failureNotice(
+      error,
+      "action:platformAdmin.reactivate",
+      "Could not reactivate gym.",
+      {
+        notRecordedNotice:
+          "The database didn't respond in time, so this gym was not reactivated. Please try again.",
+        ambiguousNotice:
+          "We couldn't confirm whether this reactivation completed — the database connection was interrupted. Please check the gym's subscription and payments on this page before trying again.",
+      },
     );
   }
+  detailRedirect(organizationId, notice);
 }
 
 export async function reviewOfferAction(formData: FormData): Promise<void> {
@@ -146,6 +228,7 @@ export async function reviewOfferAction(formData: FormData): Promise<void> {
   const organizationId = formString(formData, "organizationId");
   const offerId = formString(formData, "offerId");
   const decision = formString(formData, "decision");
+  let notice: string;
   try {
     if (decision !== "APPROVED" && decision !== "DECLINED") {
       throw new PlatformAdminValidationError("Choose approve or decline.");
@@ -160,11 +243,17 @@ export async function reviewOfferAction(formData: FormData): Promise<void> {
       agreedAmount: formString(formData, "agreedAmount"),
       notes: formString(formData, "notes"),
     });
-    detailRedirect(organizationId, `Offer ${decision.toLowerCase()}.`);
+    notice = `Offer ${decision.toLowerCase()}.`;
   } catch (error) {
-    detailRedirect(
-      organizationId,
-      error instanceof Error ? error.message : "Could not decide offer.",
+    notice = failureNotice(
+      error,
+      "action:platformAdmin.reviewOffer",
+      "Could not decide offer.",
+      {
+        notRecordedNotice:
+          "The database didn't respond in time, so this offer decision was not saved. Please try again.",
+      },
     );
   }
+  detailRedirect(organizationId, notice);
 }

@@ -17,7 +17,8 @@ import { classifyDatabaseError } from "./db-errors";
  * - Server actions have no single wrapper, so only the existing
  *   central error translators log: the payment action
  *   (recordPaymentAction), the claim-decision mapper
- *   (mapDecisionError), and the staff message mapper (toSafeMessage).
+ *   (mapDecisionError), the staff message mapper (toSafeMessage),
+ *   and the platform-admin notice mapper (failureNotice).
  * - Services NEVER log: they throw typed errors and let the boundary
  *   decide. If you add a call anywhere else, the same exception will
  *   be logged twice.

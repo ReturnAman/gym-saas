@@ -675,13 +675,21 @@ Supported by current repository evidence unless marked otherwise:
    Release still requires staging environment setup, staging
    migration verification, live OTP verification, production
    Clerk configuration, and a tested backup/restore plan.
-7. **Remaining hardening (audit items M1–M3) — Not started.**
-   Three list reads are unbounded (claim queues, per-membership
-   payment history, today's attendance); request-scoped scope
-   resolution is not memoized; there is no rate limiting outside
-   the OTP path. Failure logging does not yet cover the member
-   create/update, attendance, settings, or onboarding actions.
-8. **Readiness probe — Not started.** `/api/health` is a liveness
+7. **Remaining hardening (audit items M1–M3) — Partially
+   complete.** M1a bounded-list hardening is implemented and
+   merged (PR #4): the pending-claim queue, per-membership
+   payment/reversal/claim histories, and today's attendance are
+   capped, with exact totals still derived from the central money
+   funnel. Remaining: M1b (payment-status grouped aggregate for
+   the members list) is not started; M2 request-scoped scope
+   memoization is not started; M3 rate limiting outside the OTP
+   path is not started. Failure logging does not yet cover the
+   member create/update, attendance, settings, or onboarding
+   actions.
+8. **Readiness probe — Implemented and merged.** `GET /api/ready`
+   runs a single `SELECT 1` on the pooled client: 200 when the
+   database answers, 503 with the shared database-unavailable
+   body otherwise (PR #4). `/api/health` remains a liveness
    check only and does not test database reachability.
 9. **PWA basics — Not started.** No `public/` directory, manifest,
     or icons exist.
@@ -692,8 +700,12 @@ Supported by current repository evidence unless marked otherwise:
     member temporarily has two user records by design (ADR 021).
 12. **Owner dashboard** — the organization home is a link hub; no
     at-a-glance dues/expiry/attendance summary exists.
-13. **SaaS billing/trial — Not started.** No subscription or trial
-    mechanics for gyms.
+13. **SaaS billing/trial — Implemented and merged.** Seven-day
+    trial with one-trial enforcement per Clerk owner identity and
+    verified phone, manual SaaS subscription payments, platform-
+    admin controls, and entitlement enforcement (PR #4; §4.11).
+    Payments are manual in V1 by design; a payment-gateway
+    integration is future work.
 14. **Documentation debt** — ADR 023 (staff management) and ADR 024
     (payment claims) are not written; ADR 013 and ADR 017 remain
     Proposed although their patterns are implemented.

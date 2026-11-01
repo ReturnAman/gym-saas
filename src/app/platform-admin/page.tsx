@@ -28,14 +28,24 @@ function formatRemaining(ms: number | null): string {
   return `${hours}h left`;
 }
 
+function pageHref(q: string, page: number): string {
+  const query = new URLSearchParams();
+  if (q) query.set("q", q);
+  if (page > 1) query.set("page", String(page));
+  const qs = query.toString();
+  return qs ? `/platform-admin?${qs}` : "/platform-admin";
+}
+
 export default async function PlatformAdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; page?: string }>;
 }) {
   await requirePlatformAdmin();
   const params = await searchParams;
-  const overview = await getPlatformAdminOverview(params.q ?? "");
+  const q = params.q ?? "";
+  const page = Math.max(1, Number.parseInt(params.page ?? "1", 10) || 1);
+  const overview = await getPlatformAdminOverview(q, page);
 
   return (
     <main>
@@ -63,27 +73,56 @@ export default async function PlatformAdminPage({
         <button type="submit">Search</button>
       </form>
 
-      {overview.organizations.length === 0 ? (
+      {overview.totalMatching === 0 ? (
         <p>No gyms found.</p>
       ) : (
-        <ul>
-          {overview.organizations.map((row) => (
-            <li key={row.organization.id}>
-              <Link href={`/platform-admin/orgs/${row.organization.id}`}>
-                {row.organization.name}
-              </Link>{" "}
-              — {row.state}
-              {row.ownerDisplayName && ` — owner: ${row.ownerDisplayName}`}
-              {row.subscription?.trialEndsAt &&
-                ` — trial ends ${dateFormat.format(row.subscription.trialEndsAt)} (${formatRemaining(row.trialRemainingMs)})`}
-              {row.subscription?.paidThroughAt &&
-                ` — paid through ${dateFormat.format(row.subscription.paidThroughAt)}`}
-              {row.pendingOffer && " — offer requested"}
-              {row.latestOffer?.status === "APPROVED" &&
-                ` — offer approved ${row.latestOffer.discountPercent}%`}
-            </li>
-          ))}
-        </ul>
+        <>
+          <ul>
+            {overview.organizations.map((row) => (
+              <li key={row.organization.id}>
+                <Link href={`/platform-admin/orgs/${row.organization.id}`}>
+                  {row.organization.name}
+                </Link>{" "}
+                — {row.state}
+                {row.ownerDisplayName && ` — owner: ${row.ownerDisplayName}`}
+                {row.subscription?.trialEndsAt &&
+                  ` — trial ends ${dateFormat.format(row.subscription.trialEndsAt)} (${formatRemaining(row.trialRemainingMs)})`}
+                {row.subscription?.paidThroughAt &&
+                  ` — paid through ${dateFormat.format(row.subscription.paidThroughAt)}`}
+                {row.pendingOffer && " — offer requested"}
+                {row.latestOffer?.status === "APPROVED" &&
+                  ` — offer approved ${row.latestOffer.discountPercent}%`}
+              </li>
+            ))}
+          </ul>
+
+          <div>
+            <p>
+              Showing{" "}
+              {overview.organizations.length === 0
+                ? 0
+                : (overview.page - 1) * overview.pageSize + 1}
+              –
+              {Math.min(
+                overview.page * overview.pageSize,
+                overview.totalMatching,
+              )}{" "}
+              of {overview.totalMatching} gyms
+            </p>
+            <nav aria-label="Gym pages">
+              {overview.page > 1 ? (
+                <Link href={pageHref(q, overview.page - 1)}>Previous</Link>
+              ) : (
+                <span aria-hidden="true">Previous</span>
+              )}{" "}
+              {overview.page < overview.totalPages ? (
+                <Link href={pageHref(q, overview.page + 1)}>Next</Link>
+              ) : (
+                <span aria-hidden="true">Next</span>
+              )}
+            </nav>
+          </div>
+        </>
       )}
     </main>
   );

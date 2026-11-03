@@ -1,15 +1,119 @@
+/*
+ * Design foundation — ported from the approved Stage 0 design system
+ * (docs/ui-design-system.md, docs/reference-ui-spec.md).
+ *
+ * This file carries the design tokens and the base rules that are safe
+ * to apply application-wide today. The dark shell itself — the
+ * near-black canvas, `color-scheme: dark`, the unclassed-<main>
+ * fallback layer, dark form controls, and the global link/focus
+ * treatment — is applied surface-by-surface in the later integration
+ * slices, because every current screen renders a bare <main> with
+ * scheme-adaptive (light-dark) styling, and flipping the shell first
+ * would re-theme platform-admin, subscription, and member surfaces
+ * without their design review. See the integration note in
+ * docs/ui-design-system.md for the staged list.
+ */
+
 :root {
+  /* Interim: stays `light dark` until the dark shell lands per-surface. */
   color-scheme: light dark;
+
+  /* Approved design tokens (docs/ui-design-system.md). */
+  --ink: #f5f5f5;
+  --ink-soft: #b5b5b5;
+  --muted: #8b8b8b;
+  --line: #262626;
+  --canvas: #050505;
+  --surface: #0b0b0b;
+  --surface-soft: #11120e;
+  --forest: #141a10;
+  --forest-deep: #050505;
+  --lime: #b8f175;
+  --lime-deep: #a6e65c;
+  --green: #70e2a8;
+  --green-soft: #10251a;
+  --amber: #f4c65b;
+  --amber-soft: #29220e;
+  --red: #ff857b;
+  --red-soft: #2a1412;
+  --shadow-soft: 0 18px 48px rgba(0, 0, 0, 0.32);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+
+  /* Interim compatibility shell: unchanged geometry until the surface
+   * slices replace it with the design shell. */
   margin: 0;
   padding: 2rem;
-  line-height: 1.6;
 }
 
 main {
+  /* Interim compatibility shell: see body. */
   max-width: 42rem;
   margin: 0 auto;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #737373;
+}
+
+h1,
+h2,
+h3,
+p {
+  overflow-wrap: anywhere;
+}
+
+::selection {
+  color: #080a05;
+  background: var(--lime);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

@@ -40,7 +40,7 @@
  *   Indian mobile. Anything else is rejected.
  *
  * The India default for bare 10-digit numbers is a documented product
- * assumption: this is an India-first product (INR pricing, 2Factor SMS,
+ * assumption: this is an India-first product (INR pricing, APITxT SMS,
  * TRAI/DLT rules). A number from another country must arrive in
  * international form (with "+") to be accepted.
  */

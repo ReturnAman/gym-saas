@@ -109,7 +109,6 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
     const createdUserIds: string[] = [];
     const usedPhones: string[] = [];
     let phoneCounter = 0;
-    let challengeCounter = 0;
 
     function nextPhone(): string {
       phoneCounter += 1;
@@ -174,12 +173,10 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         consumedAt?: Date | null;
       } = {},
     ) {
-      challengeCounter += 1;
       return db.memberOtpChallenge.create({
         data: {
           organizationId: orgId,
           phoneNumber,
-          providerSessionId: `join-test-${suffix}-${challengeCounter}`,
           status: overrides.status ?? "VERIFIED",
           expiresAt: new Date(Date.now() + 5 * 60_000),
           verifiedAt:
@@ -814,7 +811,6 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         data: {
           organizationId: org.id,
           phoneNumber: phone,
-          providerSessionId: `join-dec-e2e-${suffix}`,
           status: "VERIFIED",
           expiresAt: new Date(Date.now() + 5 * 60_000),
           verifiedAt: new Date(),

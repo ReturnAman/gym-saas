@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockMemberFindFirst,
@@ -8,7 +8,6 @@ const {
   mockChallengeUpdate,
   mockChallengeUpdateMany,
   mockSendOtp,
-  mockVerifyOtp,
 } = vi.hoisted(() => ({
   mockMemberFindFirst: vi.fn(),
   mockChallengeFindFirst: vi.fn(),
@@ -17,7 +16,6 @@ const {
   mockChallengeUpdate: vi.fn(),
   mockChallengeUpdateMany: vi.fn(),
   mockSendOtp: vi.fn(),
-  mockVerifyOtp: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -33,12 +31,14 @@ vi.mock("@/lib/server/db", () => ({
   },
 }));
 
-vi.mock("@/lib/server/twofactor-provider", () => ({
-  twoFactorProvider: { sendOtp: mockSendOtp, verifyOtp: mockVerifyOtp },
+vi.mock("@/lib/server/apitxt-provider", () => ({
+  apiTxtProvider: { sendOtp: mockSendOtp },
 }));
+
 
 import { MemberValidationError } from "@/lib/members";
 import { requestMemberOtp, verifyMemberOtp } from "@/lib/server/member-auth";
+import { computeOtpHash } from "@/lib/server/otp-crypto";
 import { OtpVerificationError } from "@/lib/server/otp-service";
 import { SmsProviderError } from "@/lib/server/sms-provider";
 
@@ -46,11 +46,18 @@ const ORG_ID = "c3298d3b-a07f-33eb-de2b-00333455cf3f";
 const PHONE = "9876543210";
 const CHALLENGE_ID = "a12b3c4d-5e6f-47a8-b9c0-0a1b2c3d4e5f";
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OTP_SHAPE = /^[0-9]{6}$/;
+const TEST_OTP_SECRET = "test-otp-hmac-secret-0123456789abcdef";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("MEMBER_OTP_HMAC_SECRET", TEST_OTP_SECRET);
   mockChallengeUpdate.mockResolvedValue({});
   mockChallengeUpdateMany.mockResolvedValue({ count: 0 });
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("requestMemberOtp", () => {
@@ -74,12 +81,12 @@ describe("requestMemberOtp", () => {
     mockMemberFindFirst.mockResolvedValue({ id: "member-id" });
     mockChallengeFindFirst.mockResolvedValue(null);
     mockChallengeCount.mockResolvedValue(0);
-    mockSendOtp.mockResolvedValue({ providerSessionId: "provider-session-xyz" });
+    mockSendOtp.mockResolvedValue(undefined);
     mockChallengeCreate.mockResolvedValue({ id: CHALLENGE_ID });
 
     const result = await requestMemberOtp({ organizationId: ORG_ID, phoneNumber: PHONE });
     expect(result).toEqual({ challengeId: CHALLENGE_ID });
-    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    expect(mockSendOtp).toHaveBeenCalledWith(PHONE, expect.stringMatching(OTP_SHAPE));
     expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -107,7 +114,7 @@ describe("requestMemberOtp", () => {
   function mockIssuableChallenge() {
     mockChallengeFindFirst.mockResolvedValue(null);
     mockChallengeCount.mockResolvedValue(0);
-    mockSendOtp.mockResolvedValue({ providerSessionId: "provider-session-xyz" });
+    mockSendOtp.mockResolvedValue(undefined);
     mockChallengeCreate.mockResolvedValue({ id: CHALLENGE_ID });
   }
 
@@ -122,7 +129,7 @@ describe("requestMemberOtp", () => {
     expect(result).toEqual({ challengeId: CHALLENGE_ID });
     // The member-row eligibility check belongs to the link rule only.
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
-    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    expect(mockSendOtp).toHaveBeenCalledWith(PHONE, expect.stringMatching(OTP_SHAPE));
     expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -139,7 +146,7 @@ describe("requestMemberOtp", () => {
     });
     expect(result).toEqual({ challengeId: CHALLENGE_ID });
     expect(mockMemberFindFirst).not.toHaveBeenCalled();
-    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    expect(mockSendOtp).toHaveBeenCalledWith(PHONE, expect.stringMatching(OTP_SHAPE));
     expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
   });
 
@@ -228,13 +235,13 @@ describe("requestMemberOtp", () => {
 });
 
 describe("verifyMemberOtp", () => {
-  it("rejects a malformed OTP generically without calling the provider", async () => {
+  it("rejects a malformed OTP generically without touching the challenge", async () => {
     for (const otp of ["12345", "abcdef", "1234567", ""]) {
       await expect(
         verifyMemberOtp({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp }),
       ).rejects.toBeInstanceOf(OtpVerificationError);
     }
-    expect(mockVerifyOtp).not.toHaveBeenCalled();
+    expect(mockChallengeFindFirst).not.toHaveBeenCalled();
     expect(mockChallengeUpdate).not.toHaveBeenCalled();
   });
 
@@ -243,13 +250,17 @@ describe("verifyMemberOtp", () => {
       id: CHALLENGE_ID,
       organizationId: ORG_ID,
       phoneNumber: PHONE,
-      providerSessionId: "provider-session-xyz",
+      otpHash: computeOtpHash(TEST_OTP_SECRET, {
+        organizationId: ORG_ID,
+        challengeId: CHALLENGE_ID,
+        phoneNumber: PHONE,
+        otp: "123456",
+      }),
       status: "PENDING",
       attempts: 0,
       expiresAt: new Date(Date.now() + 5 * 60_000),
       verifiedAt: null,
     });
-    mockVerifyOtp.mockResolvedValue({ verified: true });
 
     const result = await verifyMemberOtp({
       organizationId: ORG_ID,

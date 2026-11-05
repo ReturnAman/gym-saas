@@ -602,13 +602,21 @@ model AttendanceSession {
 }
 
 // ---------------------------------------------------------------------------
-// Member OTP foundation (02-USER-FLOWS §9; provider: 2Factor AUTOGEN/VERIFY).
+// Member OTP foundation (02-USER-FLOWS §9; delivery provider: APITxT SMS).
 // ---------------------------------------------------------------------------
 // A MemberOtpChallenge is one OTP request for member authentication. The
-// OTP itself is generated and verified by the SMS provider — it is NEVER
-// stored here (there is deliberately no code column), never logged, and
-// never returned to the client. Only the provider's session identifier is
-// persisted, server-side, so VERIFY can be called against it.
+// OTP is generated and verified by the APPLICATION; the SMS provider
+// only delivers it. The raw code is NEVER stored here (there is
+// deliberately no code column), never logged, and never returned to the
+// client. Only a keyed HMAC-SHA256 digest of the code — bound to the
+// organization, the challenge, and the phone number — is persisted, so
+// verification is a local constant-time digest comparison and a leaked
+// row yields no usable code. otpHash is nullable only to accommodate
+// historical rows from the previous provider-managed model; newly
+// issued challenges always carry a digest, and a row without one can
+// never verify. Challenge lifecycle and replay protections are
+// unchanged: PENDING → VERIFIED (single-use) / EXPIRED / SUPERSEDED /
+// LOCKED, consumed exactly once by linking via consumedAt.
 //
 // There is deliberately NO Member or User foreign key: at request time the
 // phone number is discovery only (member phones are not unique within an
@@ -630,7 +638,7 @@ model MemberOtpChallenge {
   id                String             @id @default(uuid())
   organizationId    String             @map("organization_id")
   phoneNumber       String             @map("phone_number")
-  providerSessionId String             @map("provider_session_id")
+  otpHash           String?            @map("otp_hash")
   status            OtpChallengeStatus @default(PENDING)
   attempts          Int                @default(0)
   expiresAt         DateTime           @map("expires_at") @db.Timestamptz(6)

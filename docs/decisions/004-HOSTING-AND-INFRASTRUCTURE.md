@@ -26,8 +26,9 @@ provisioned, purchased, or deployed.
 
 gym-saas is a multi-tenant gym-management SaaS: Next.js 16 + TypeScript
 modular monolith, Prisma 7 over PostgreSQL (12 migrations, verified
-against PostgreSQL 16), Clerk for owner/staff authentication, 2Factor
-SMS OTP for members (live path not yet verified). The repository is
+against PostgreSQL 16), Clerk for owner/staff authentication, APITxT
+SMS delivery for member OTP (application-owned generation and
+verification; live path not yet verified). The repository is
 already host-portable: a Procfile maps the release phase to
 `npx prisma migrate deploy`, Node is pinned to `20.x`, and the Prisma
 CLI ships in production dependencies.
@@ -153,13 +154,14 @@ carried into the comparison.
   one paid web service (Starter class, 512 MB), smallest paid
   PostgreSQL (Basic-256mb) in Singapore; build `npm run build`, start
   `npm start`, pre-deploy `npx prisma migrate deploy`; reuse the
-  existing CI Clerk *development* instance; `TWOFACTOR_API_KEY` unset
-  initially (member OTP returns 503; the app boots and staff flows
+  existing CI Clerk *development* instance; `APITXT_API_KEY` and
+  `MEMBER_OTP_HMAC_SECRET` unset initially (member OTP returns 503;
+  the app boots and staff flows
   work); a free external uptime ping on `/api/health`.
   **Exit criterion: a timed PITR restore drill** (§6) must pass before
   any real data is considered.
 - **Pilot (first real gym):** same shape, plus a production Clerk
-  instance and keys, a 2Factor account + API key with one verified
+  instance and keys, an APITxT account + API key with one verified
   live OTP round-trip, and a custom domain. Workspace moves to Pro
   ($25/mo) only if the 7-day PITR window or other Pro features are
   wanted — not required for the pilot.
@@ -196,8 +198,8 @@ on the existing plan; error tracking on a free tier initially
 
 **Included:** web hosting, managed Postgres, TLS, the platform
 features in §3.4. **Excluded:** domain registration (~₹800–1,200/yr
-when purchased), 2Factor SMS charges (per-message, usage-dependent,
-billed by 2Factor), any paid error-tracking tier, bandwidth beyond
+when purchased), APITxT SMS charges (per-message, usage-dependent,
+billed by APITxT), any paid error-tracking tier, bandwidth beyond
 plan allowances (Render meters bandwidth), taxes and card
 currency-conversion charges on USD billing, the owner's time.
 The Render figure exceeds the ₹0–1,000 target in original §29; that
@@ -209,7 +211,8 @@ PITR; Railway only if the unverified Hobby assumption holds).
 
 - **Secrets:** only in the provider's environment mechanism — never in
   the repository (original §17). Production Clerk keys and
-  `TWOFACTOR_API_KEY` are provisioned through the secure flow at
+  `APITXT_API_KEY` and `MEMBER_OTP_HMAC_SECRET` are provisioned
+  through the secure flow at
   deploy time; staging and production use separate services, separate
   databases, and separate Clerk instances. Production access is
   limited to the owner.

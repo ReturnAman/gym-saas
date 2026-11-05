@@ -1,19 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The 2Factor provider is the only stub in this suite: sends resolve
- * with synthetic session ids and every code verifies. Everything else
- * — the facade, the OTP service, the database — is real, so the
- * eligibility, rate-limit, and consumption guarantees are proven
- * against actual challenge rows.
+ * The APITxT delivery provider is the only stub in this suite: sends
+ * capture the application-generated code instead of dispatching an
+ * SMS, and verification runs the real local digest comparison against
+ * it. Everything else — the facade, the OTP service, the database —
+ * is real, so the eligibility, rate-limit, and consumption guarantees
+ * are proven against actual challenge rows.
  */
-const { mockSendOtp, mockVerifyOtp } = vi.hoisted(() => ({
+const { mockSendOtp } = vi.hoisted(() => ({
   mockSendOtp: vi.fn(),
-  mockVerifyOtp: vi.fn(),
 }));
 
-vi.mock("@/lib/server/twofactor-provider", () => ({
-  twoFactorProvider: { sendOtp: mockSendOtp, verifyOtp: mockVerifyOtp },
+vi.mock("@/lib/server/apitxt-provider", () => ({
+  apiTxtProvider: { sendOtp: mockSendOtp },
 }));
 
 import { db } from "@/lib/server/db";
@@ -49,8 +49,15 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
     const suffix = crypto.randomUUID().slice(0, 8);
     const createdOrgIds: string[] = [];
     const usedPhones: string[] = [];
+    const sentOtps: string[] = [];
     let phoneCounter = 0;
-    let sendCounter = 0;
+
+    const TEST_OTP_SECRET = "test-otp-hmac-secret-0123456789abcdef";
+
+    /** The code the application generated for the most recent send. */
+    function lastSentOtp(): string {
+      return sentOtps[sentOtps.length - 1]!;
+    }
 
     function nextPhone(): string {
       phoneCounter += 1;
@@ -98,7 +105,6 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         data: Array.from({ length: 100 }, (_, i) => ({
           organizationId: orgId,
           phoneNumber: `97${String(i).padStart(8, "0")}`,
-          providerSessionId: `seed-${suffix}-${i}`,
           status: "EXPIRED" as const,
           expiresAt: new Date(Date.now() + 5 * 60_000),
         })),
@@ -122,11 +128,10 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
 
     beforeEach(() => {
       vi.clearAllMocks();
-      mockSendOtp.mockImplementation(async () => {
-        sendCounter += 1;
-        return { providerSessionId: `stub-${suffix}-${sendCounter}` };
+      vi.stubEnv("MEMBER_OTP_HMAC_SECRET", TEST_OTP_SECRET);
+      mockSendOtp.mockImplementation(async (_phone: string, otp: string) => {
+        sentOtps.push(otp);
       });
-      mockVerifyOtp.mockResolvedValue({ verified: true });
     });
 
     afterAll(async () => {
@@ -167,12 +172,12 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         status: "PENDING",
       });
-      expect(mockSendOtp).toHaveBeenCalledWith(phone);
+      expect(mockSendOtp).toHaveBeenCalledWith(phone, expect.stringMatching(/^[0-9]{6}$/));
 
       const verified = await verifyMemberOtp({
         organizationId: org.id,
         challengeId,
-        otp: "123456",
+        otp: lastSentOtp(),
       });
       expect(verified).toEqual({ verified: true });
       expect((await challengeRow(challengeId))?.status).toBe("VERIFIED");
@@ -302,7 +307,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       // The challenge is phone-proof; linking applies its own
       // candidate rules and this member was always linkable.
@@ -328,7 +333,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       // Zero candidates: linking fails with its one generic error and
       // the failed transaction leaves the challenge unconsumed.
@@ -347,7 +352,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         organizationId: org.id,
         phoneNumber: phone,
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       const result = await submitMemberJoinRequest(
         joinInput(org.id, challengeId),
@@ -367,12 +372,10 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       // Both provider sends stay in flight until the test releases
       // them, so the two requests genuinely overlap; releasing them
       // in order models the two SMS sends completing in sequence.
-      const releases: Array<
-        (value: { providerSessionId: string }) => void
-      > = [];
+      const releases: Array<() => void> = [];
       mockSendOtp.mockImplementation(
         () =>
-          new Promise<{ providerSessionId: string }>((resolve) => {
+          new Promise<void>((resolve) => {
             releases.push(resolve);
           }),
       );
@@ -389,7 +392,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       });
       await vi.waitFor(() => expect(releases).toHaveLength(2));
 
-      releases[0]!({ providerSessionId: `race-${suffix}-1` });
+      releases[0]!();
       // The first request has fully landed before the second send
       // completes, so the second send's supersede must retire it.
       await vi.waitFor(async () => {
@@ -398,7 +401,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         });
         expect(rows).toHaveLength(1);
       });
-      releases[1]!({ providerSessionId: `race-${suffix}-2` });
+      releases[1]!();
 
       const [firstResult, secondResult] = await Promise.all([first, second]);
       expect(firstResult.challengeId).not.toBe(secondResult.challengeId);

@@ -15,7 +15,7 @@
 //     instead of generating meaningful load against real data.
 //
 // Authentication: seeded member sessions only (gym_member_session
-// cookie). No Clerk, no OTP, no 2Factor — see README.md.
+// cookie). No Clerk, no OTP, no APITxT — see README.md.
 import http from "k6/http";
 import { check } from "k6";
 import { SharedArray } from "k6/data";

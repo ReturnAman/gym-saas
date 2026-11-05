@@ -113,9 +113,9 @@ export async function verifyMemberOtp(input: {
   challengeId: string;
   otp: string;
 }): Promise<{ verified: true }> {
-  // A well-formed code is exactly 6 digits (2Factor AUTOGEN). Anything else
-  // cannot be the issued code: fail generically without consuming an
-  // attempt or calling the provider.
+  // A well-formed code is exactly 6 digits (the application-generated
+  // OTP contract). Anything else cannot be the issued code: fail
+  // generically without consuming an attempt or touching the challenge.
   const otp = input.otp.trim();
   if (!/^[0-9]{6}$/.test(otp)) {
     throw new OtpVerificationError();

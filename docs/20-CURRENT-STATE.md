@@ -55,7 +55,8 @@ database, or API documents.
   control of the phone. The system never reveals whether an arbitrary
   phone number belongs to a gym.
 - Clerk authenticates owners/staff; member authentication is a
-  separate 2Factor SMS-OTP path that never reads Clerk state
+  separate SMS-OTP path (APITxT delivery; OTP generation and
+  verification are application-owned) that never reads Clerk state
   (two-hats rule, ADR 021).
 
 # 3. Architecture and security baseline
@@ -98,8 +99,11 @@ partial payments allowed, overpayment allowed, outstanding derived
 and floored at ₹0, every recording audited. There is no separate
 charge model — the membership fee is the amount due.
 
-## 4.4 Member OTP, sessions, and linking — code complete, provider UNVERIFIED
-2Factor AUTOGEN/VERIFY foundation with DB-backed rate limiting
+## 4.4 Member OTP, sessions, and linking — code complete, delivery UNVERIFIED
+APITxT SMS delivery with application-owned OTP generation and
+verification (only a keyed HMAC digest of each code is stored;
+verification is a local constant-time comparison — there is no
+provider verification call), with DB-backed rate limiting
 (30-second resend cooldown, 5/phone/hour, 100/org/hour, 5-minute
 challenge TTL, 5 attempts then locked), anti-enumeration responses,
 phone-backed member sessions (SHA-256 token hash only, 30-day
@@ -108,10 +112,14 @@ issuance is intent-aware: the default (`link`) eligibility rule
 described here is unchanged, and an explicit `join` intent issues
 real challenges to phones with no member record, for the
 join-request flow in §4.9.
-**Unverified:** the live 2Factor wire details have never been
-exercised — no API key has been provisioned and no live OTP
-round-trip has been performed. The OTP endpoints return a safe
-"unavailable" response when unconfigured.
+**Unverified:** the live APITxT delivery path has never been
+exercised — neither the APITxT API key nor the OTP HMAC secret has
+been provisioned and no live OTP round-trip has been performed.
+The APITxT account's default SMS OTP configuration also still
+needs to be set up for the owner's selected no-DLT route;
+regulatory compliance has not been independently established.
+The OTP endpoints return a safe "unavailable" response when
+unconfigured.
 
 ## 4.5 Attendance (Slices 1 + 2)
 Manual staff check-in/check-out with one-open-session enforcement,
@@ -275,7 +283,7 @@ that gym before any member record exists:
   implemented. Residual exposure, accepted and recorded: SMS can
   now be triggered to arbitrary numbers within the caps, and
   rotating across gyms multiplies the per-gym cap (tracked under
-  M3 in §8). Live 2Factor remains unverified, as in §4.4.
+  M3 in §8). Live APITxT delivery remains unverified, as in §4.4.
 - **Approve / reject decisions** (Slice 2, commit `1cc6b88`;
   service functions `approveJoinRequest` / `rejectJoinRequest`):
   each decision is ONE transaction — the actor's role is
@@ -372,7 +380,7 @@ part or in full, by appending a `PaymentReversal` record
 Release gates are unchanged (§8): the reversal migration has
 been verified only against a disposable local database, not
 on staging, and hosting/provisioning, production Clerk, live
-2Factor verification, and a tested backup/restore all remain
+APITxT OTP delivery verification, and a tested backup/restore all remain
 outstanding.
 
 ## 4.11 SaaS trial & manual subscriptions (implemented on branch `feature/saas-trial-subscriptions`, not yet released or deployed)
@@ -649,10 +657,11 @@ Supported by current repository evidence unless marked otherwise:
    production Clerk instance, domain, or environment variables exist
    outside CI. Stage 0 (staging, synthetic data only) is the agreed
    first step once a provider is chosen.
-2. **2Factor live verification** — account, API key (via secure
-   configuration only), DLT registration, and one live OTP
-   round-trip are all outstanding; until then member sign-in is
-   unverified end to end.
+2. **APITxT live verification** — account default SMS OTP route
+   configuration for the owner's selected no-DLT route, the API
+   key and OTP HMAC secret (via secure configuration only), and
+   one live OTP round-trip are all outstanding; until then member
+   sign-in is unverified end to end.
 3. **Backups and restore** — no backup schedule, restore drill, or
    off-platform copy exists for any future production database;
    recovery testing is an ADR 004 requirement before real data.
@@ -683,9 +692,9 @@ Supported by current repository evidence unless marked otherwise:
    funnel. Remaining: M1b (payment-status grouped aggregate for
    the members list) is not started; M2 request-scoped scope
    memoization is not started; M3 rate limiting outside the OTP
-   path is not started. Failure logging does not yet cover the
-   member create/update, attendance, settings, or onboarding
-   actions.
+   path is not started. Failure logging
+   does not yet cover the member create/update, attendance,
+   settings, or onboarding actions.
 8. **Readiness probe — Implemented and merged.** `GET /api/ready`
    runs a single `SELECT 1` on the pooled client: 200 when the
    database answers, 503 with the shared database-unavailable
@@ -749,8 +758,9 @@ Supported by current repository evidence unless marked otherwise:
 1. Decide hosting (resolve ADR 004) and provision a Stage 0 staging
    environment with synthetic data only; complete a timed restore
    drill before any real data is considered.
-2. Provision the production Clerk instance and the 2Factor account;
-   perform one live OTP round-trip.
+2. Provision the production Clerk instance and the APITxT account
+   (default SMS OTP route configured); perform one live OTP
+   round-trip.
 3. Implement membership renewal. Verify the payment-reversal
    migration on staging after the staging environment is
    provisioned (§4.10).

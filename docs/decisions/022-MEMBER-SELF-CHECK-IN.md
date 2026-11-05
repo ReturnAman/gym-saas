@@ -147,7 +147,7 @@ check-in should write an audit event.
   signing in to another gym replaces the current session cookie, and
   the member re-proves membership per gym. The check-in landing's
   mismatch state handles this explicitly.
-- **Live SMS depends on the provisioned 2Factor configuration**
+- **Live SMS depends on the provisioned APITxT configuration**
   (ADR 021): without it, OTP delivery fails closed and self check-in
   is unreachable in production, while all server-side behavior remains
   as specified here.

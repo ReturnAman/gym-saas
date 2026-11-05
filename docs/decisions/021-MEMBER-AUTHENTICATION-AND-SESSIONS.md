@@ -45,8 +45,8 @@ authorization boundary.
 1. **Staff/owner authentication remains Clerk.** Clerk sessions,
    `getCurrentUser()`, and the `/app` surface are unchanged.
 
-2. **Member authentication uses phone OTP** (2Factor, per the OTP
-   foundation) **plus application-managed, database-backed sessions**.
+2. **Member authentication uses phone OTP** (per the OTP foundation;
+   delivery provider superseded 2026-11-05 — see the Amendment) **plus application-managed, database-backed sessions**.
    No Clerk involvement of any kind: the member path never calls
    `auth()`/`getCurrentUser()`, never reads Clerk session state, and
    never creates or modifies a Clerk session.
@@ -139,3 +139,27 @@ authorization boundary.
   rejected by the two-hats rule: it would require reading Clerk state in
   the member path and blur the privilege boundary. Deferred to an
   explicitly authenticated merge flow.
+
+
+# Amendment (2026-11-05): OTP delivery provider and verification ownership
+
+The SMS delivery provider is **APITxT** (`POST https://apitxt.com/api/sendOTP`),
+replacing 2Factor as the selected provider. APITxT documents a delivery
+endpoint only — there is no provider verification call — so OTP
+generation and verification are **application-owned**:
+
+- The application generates the six-digit code with a cryptographically
+  secure source and persists only a keyed HMAC-SHA256 digest of it,
+  bound to the organization, challenge, and phone number
+  (`MEMBER_OTP_HMAC_SECRET`, a server-only secret independent of the
+  Clerk and provider credentials).
+- Verification is a local constant-time digest comparison. The raw code
+  is never stored or logged, and the provider's delivery `request_id` is
+  not a session and is never used for verification.
+- Challenge lifecycle, rate limits, anti-enumeration behavior, tenant
+  binding, sessions, and linking are exactly as decided in this ADR;
+  only the delivery provider and the verification mechanism changed.
+- The APITxT account's default SMS OTP configuration must be set up for
+  the owner's selected no-DLT route before live use. Documented
+  provider behavior is limited to the send contract above; regulatory
+  compliance has not been independently established.

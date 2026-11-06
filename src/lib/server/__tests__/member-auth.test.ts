@@ -8,6 +8,9 @@ const {
   mockChallengeUpdate,
   mockChallengeUpdateMany,
   mockSendOtp,
+  mockCheckOtpRequestIpLimit,
+  mockTransaction,
+  mockTxExecuteRaw,
 } = vi.hoisted(() => ({
   mockMemberFindFirst: vi.fn(),
   mockChallengeFindFirst: vi.fn(),
@@ -16,6 +19,9 @@ const {
   mockChallengeUpdate: vi.fn(),
   mockChallengeUpdateMany: vi.fn(),
   mockSendOtp: vi.fn(),
+  mockCheckOtpRequestIpLimit: vi.fn(),
+  mockTransaction: vi.fn(),
+  mockTxExecuteRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -28,6 +34,7 @@ vi.mock("@/lib/server/db", () => ({
       update: mockChallengeUpdate,
       updateMany: mockChallengeUpdateMany,
     },
+    $transaction: mockTransaction,
   },
 }));
 
@@ -35,6 +42,9 @@ vi.mock("@/lib/server/apitxt-provider", () => ({
   apiTxtProvider: { sendOtp: mockSendOtp },
 }));
 
+vi.mock("@/lib/server/rate-limit", () => ({
+  checkOtpRequestIpLimit: mockCheckOtpRequestIpLimit,
+}));
 
 import { MemberValidationError } from "@/lib/members";
 import { requestMemberOtp, verifyMemberOtp } from "@/lib/server/member-auth";
@@ -53,7 +63,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("MEMBER_OTP_HMAC_SECRET", TEST_OTP_SECRET);
   mockChallengeUpdate.mockResolvedValue({});
-  mockChallengeUpdateMany.mockResolvedValue({ count: 0 });
+  mockChallengeUpdateMany.mockResolvedValue({ count: 1 });
+  mockCheckOtpRequestIpLimit.mockResolvedValue("ok");
+  mockTxExecuteRaw.mockResolvedValue(1);
+  mockTransaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        memberOtpChallenge: {
+          findFirst: mockChallengeFindFirst,
+          count: mockChallengeCount,
+          create: mockChallengeCreate,
+          update: mockChallengeUpdate,
+          updateMany: mockChallengeUpdateMany,
+        },
+        $executeRaw: mockTxExecuteRaw,
+      }),
+  );
 });
 
 afterEach(() => {
@@ -231,6 +256,52 @@ describe("requestMemberOtp", () => {
       }),
     ).rejects.toBeInstanceOf(SmsProviderError);
     expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("requestMemberOtp per-IP ceiling (Phase M3a)", () => {
+  const IP_KEY = "b".repeat(64);
+
+  it("folds an enforce-mode exceedance into the synthetic response, before any eligibility or issuance work", async () => {
+    mockCheckOtpRequestIpLimit.mockResolvedValue("exceeded");
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      intent: "join",
+      ipKeyHash: IP_KEY,
+    });
+    expect(result.challengeId).toMatch(UUID_SHAPE);
+    expect(result.challengeId).not.toBe(CHALLENGE_ID);
+    expect(mockCheckOtpRequestIpLimit).toHaveBeenCalledWith(IP_KEY);
+    expect(mockMemberFindFirst).not.toHaveBeenCalled();
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+  });
+
+  it("issues normally when the IP check passes", async () => {
+    mockMemberFindFirst.mockResolvedValue({ id: "member-id" });
+    mockChallengeFindFirst.mockResolvedValue(null);
+    mockChallengeCount.mockResolvedValue(0);
+    mockSendOtp.mockResolvedValue(undefined);
+    mockChallengeCreate.mockResolvedValue({ id: CHALLENGE_ID });
+
+    const result = await requestMemberOtp({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+      ipKeyHash: IP_KEY,
+    });
+    expect(result).toEqual({ challengeId: CHALLENGE_ID });
+    expect(mockCheckOtpRequestIpLimit).toHaveBeenCalledWith(IP_KEY);
+    expect(mockChallengeCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not consult the IP limiter when the request has no IP key", async () => {
+    mockMemberFindFirst.mockResolvedValue(null);
+
+    const result = await requestMemberOtp({ organizationId: ORG_ID, phoneNumber: PHONE });
+    expect(result.challengeId).toMatch(UUID_SHAPE);
+    expect(mockCheckOtpRequestIpLimit).not.toHaveBeenCalled();
   });
 });
 

@@ -4,15 +4,17 @@ const {
   mockChallengeFindFirst,
   mockChallengeCount,
   mockChallengeCreate,
-  mockChallengeUpdate,
   mockChallengeUpdateMany,
+  mockTxExecuteRaw,
+  mockTransaction,
   mockSendOtp,
 } = vi.hoisted(() => ({
   mockChallengeFindFirst: vi.fn(),
   mockChallengeCount: vi.fn(),
   mockChallengeCreate: vi.fn(),
-  mockChallengeUpdate: vi.fn(),
   mockChallengeUpdateMany: vi.fn(),
+  mockTxExecuteRaw: vi.fn(),
+  mockTransaction: vi.fn(),
   mockSendOtp: vi.fn(),
 }));
 
@@ -22,9 +24,9 @@ vi.mock("@/lib/server/db", () => ({
       findFirst: mockChallengeFindFirst,
       count: mockChallengeCount,
       create: mockChallengeCreate,
-      update: mockChallengeUpdate,
       updateMany: mockChallengeUpdateMany,
     },
+    $transaction: mockTransaction,
   },
 }));
 
@@ -81,7 +83,21 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("MEMBER_OTP_HMAC_SECRET", SECRET);
   mockChallengeUpdateMany.mockResolvedValue({ count: 1 });
-  mockChallengeUpdate.mockResolvedValue({});
+  mockTxExecuteRaw.mockResolvedValue(1);
+  // The transaction mock runs the callback against the same mocked
+  // challenge surface the assertions inspect.
+  mockTransaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        memberOtpChallenge: {
+          findFirst: mockChallengeFindFirst,
+          count: mockChallengeCount,
+          create: mockChallengeCreate,
+          updateMany: mockChallengeUpdateMany,
+        },
+        $executeRaw: mockTxExecuteRaw,
+      }),
+  );
   // The create mock echoes the service-generated id, as the real
   // database does when the row is inserted with an explicit id.
   mockChallengeCreate.mockImplementation(
@@ -94,6 +110,22 @@ afterEach(() => {
 });
 
 describe("issueChallenge", () => {
+  it("serializes on the advisory lock inside a transaction with an explicit timeout", async () => {
+    mockNoRateLimits();
+    mockSendOtp.mockResolvedValue(undefined);
+
+    await issueChallenge({ organizationId: ORG_ID, phoneNumber: PHONE });
+
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTransaction.mock.calls[0]?.[1]).toEqual({
+      maxWait: 5_000,
+      timeout: 20_000,
+    });
+    expect(mockTxExecuteRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (mockTxExecuteRaw.mock.calls[0]?.[0] as TemplateStringsArray).join("?");
+    expect(lockSql).toContain("pg_advisory_xact_lock");
+  });
+
   it("delivers an app-generated OTP, supersedes the old pending challenge, and persists only its digest", async () => {
     mockNoRateLimits();
     mockSendOtp.mockResolvedValue(undefined);
@@ -218,8 +250,8 @@ describe("verifyChallenge", () => {
     expect(result).toEqual({ verified: true, phoneNumber: PHONE });
     // Verification is purely local in the new model.
     expect(mockSendOtp).not.toHaveBeenCalled();
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
       data: { status: "VERIFIED", verifiedAt: expect.any(Date) },
     });
   });
@@ -247,28 +279,50 @@ describe("verifyChallenge", () => {
     ).rejects.toBeInstanceOf(OtpVerificationError);
   });
 
-  it("increments attempts on a wrong OTP", async () => {
-    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ attempts: 1 }));
+  it("records a wrong OTP with one atomic conditional increment", async () => {
+    mockChallengeFindFirst
+      .mockResolvedValueOnce(pendingChallenge({ attempts: 1 }))
+      .mockResolvedValue({ attempts: 2, status: "PENDING" });
     await expect(
       verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
-      data: { attempts: 2 },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: CHALLENGE_ID,
+        status: "PENDING",
+        attempts: { lt: OTP_MAX_VERIFY_ATTEMPTS },
+      },
+      data: { attempts: { increment: 1 } },
     });
   });
 
-  it("locks the challenge when the increment lands on the maximum", async () => {
-    mockChallengeFindFirst.mockResolvedValue(
-      pendingChallenge({ attempts: OTP_MAX_VERIFY_ATTEMPTS - 1 }),
-    );
+  it("locks the challenge when the atomic increment lands on the maximum", async () => {
+    mockChallengeFindFirst
+      .mockResolvedValueOnce(pendingChallenge({ attempts: OTP_MAX_VERIFY_ATTEMPTS - 1 }))
+      .mockResolvedValue({ attempts: OTP_MAX_VERIFY_ATTEMPTS, status: "PENDING" });
     await expect(
       verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
-      data: { attempts: OTP_MAX_VERIFY_ATTEMPTS, status: "LOCKED" },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: CHALLENGE_ID,
+        status: "PENDING",
+        attempts: { gte: OTP_MAX_VERIFY_ATTEMPTS },
+      },
+      data: { status: "LOCKED" },
     });
+  });
+
+  it("records nothing when concurrent attempts already exhausted the budget", async () => {
+    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ attempts: 2 }));
+    mockChallengeUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+    // Only the failed increment was attempted — no lock write, no
+    // second increment.
+    expect(mockChallengeUpdateMany).toHaveBeenCalledTimes(1);
   });
 
   it("locks a PENDING challenge whose attempts are already at the maximum", async () => {
@@ -278,8 +332,8 @@ describe("verifyChallenge", () => {
     await expect(
       verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
       data: { status: "LOCKED" },
     });
   });
@@ -291,8 +345,8 @@ describe("verifyChallenge", () => {
     await expect(
       verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
       data: { status: "EXPIRED" },
     });
   });
@@ -304,7 +358,7 @@ describe("verifyChallenge", () => {
         verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
       ).rejects.toBeInstanceOf(OtpVerificationError);
     }
-    expect(mockChallengeUpdate).not.toHaveBeenCalled();
+    expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
   });
 
   it("fails generically for a challenge with a missing digest (legacy row)", async () => {
@@ -332,6 +386,6 @@ describe("verifyChallenge", () => {
     expect(error).toBeInstanceOf(SmsProviderError);
     expect((error as SmsProviderError).code).toBe("NOT_CONFIGURED");
     // No attempt consumed and no state change on a configuration failure.
-    expect(mockChallengeUpdate).not.toHaveBeenCalled();
+    expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
   });
 });

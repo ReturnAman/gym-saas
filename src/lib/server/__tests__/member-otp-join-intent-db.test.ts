@@ -365,13 +365,18 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       ).toBe(0);
     });
 
-    it("leaves exactly one live challenge under concurrent join requests for one phone", async () => {
+    it("serializes concurrent join requests for one phone: exactly one SMS is sent", async () => {
       const org = await seedGym("RACE");
       const phone = nextPhone();
 
-      // Both provider sends stay in flight until the test releases
-      // them, so the two requests genuinely overlap; releasing them
-      // in order models the two SMS sends completing in sequence.
+      // The provider send stays in flight until the test releases it,
+      // so the race window is genuinely open: pre-M3a, the second
+      // request would also pass the cooldown check and dispatch its
+      // own SMS (this test then observed two sends). With issuance
+      // serialized by the (organization, phone) advisory lock, the
+      // second request waits for the first to commit and then meets
+      // the fresh challenge inside the resend cooldown — it folds to
+      // the synthetic response and never sends.
       const releases: Array<() => void> = [];
       mockSendOtp.mockImplementation(
         () =>
@@ -390,30 +395,25 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await vi.waitFor(() => expect(releases).toHaveLength(2));
+
+      await vi.waitFor(() => expect(releases).toHaveLength(1));
+      // Give the second request ample opportunity to (incorrectly)
+      // reach the provider; under serialization it cannot.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(releases).toHaveLength(1);
+      expect(mockSendOtp).toHaveBeenCalledTimes(1);
 
       releases[0]!();
-      // The first request has fully landed before the second send
-      // completes, so the second send's supersede must retire it.
-      await vi.waitFor(async () => {
-        const rows = await db.memberOtpChallenge.findMany({
-          where: { organizationId: org.id, phoneNumber: phone },
-        });
-        expect(rows).toHaveLength(1);
-      });
-      releases[1]!();
-
       const [firstResult, secondResult] = await Promise.all([first, second]);
-      expect(firstResult.challengeId).not.toBe(secondResult.challengeId);
+      expect(secondResult.challengeId).not.toBe(firstResult.challengeId);
 
       const rows = await db.memberOtpChallenge.findMany({
         where: { organizationId: org.id, phoneNumber: phone },
       });
-      expect(rows).toHaveLength(2);
-      const byId = new Map(rows.map((row) => [row.id, row]));
-      expect(byId.get(firstResult.challengeId)?.status).toBe("SUPERSEDED");
-      expect(byId.get(secondResult.challengeId)?.status).toBe("PENDING");
-      expect(rows.filter((row) => row.status === "PENDING")).toHaveLength(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: firstResult.challengeId, status: "PENDING" });
+      // The second result is synthetic: it names no stored challenge.
+      expect(rows.some((row) => row.id === secondResult.challengeId)).toBe(false);
     });
 
     it("binds a join challenge to its gym and keeps caps per-gym", async () => {

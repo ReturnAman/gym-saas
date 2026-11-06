@@ -19,6 +19,7 @@ import {
   issueChallenge,
   verifyChallenge,
 } from "./otp-service";
+import { checkOtpRequestIpLimit } from "./rate-limit";
 
 /**
  * MemberAuth — the application-facing member OTP facade
@@ -71,11 +72,28 @@ export async function requestMemberOtp(input: {
   organizationId: string;
   phoneNumber: string;
   intent?: string;
+  /**
+   * HMAC bucket key for the caller's IP (client-ip.ts), or null when
+   * the request has no trustworthy IP dimension. Never a raw address.
+   */
+  ipKeyHash?: string | null;
 }): Promise<{ challengeId: string }> {
   // Authoritative phone validation (canonical 10-digit format). Throws
   // MemberValidationError on malformed input — a shape error, safe to
   // surface as a validation response.
   const phoneNumber = validatePhoneNumber(input.phoneNumber);
+
+  // Per-IP abuse ceiling (Phase M3a, rate-limit.ts). Counting happens
+  // for every validated request, eligible or not. In shadow mode this
+  // only counts; in enforce mode an exceedance folds into the exact
+  // same synthetic response as ineligibility and rate limiting, so the
+  // three outcomes remain indistinguishable.
+  if (input.ipKeyHash) {
+    const ipOutcome = await checkOtpRequestIpLimit(input.ipKeyHash);
+    if (ipOutcome === "exceeded") {
+      return { challengeId: randomUUID() };
+    }
+  }
 
   if (input.intent !== "join") {
     const member = await db.member.findFirst({

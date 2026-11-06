@@ -121,6 +121,39 @@ regulatory compliance has not been independently established.
 The OTP endpoints return a safe "unavailable" response when
 unconfigured.
 
+**Phase M3a rate-limiting hardening (implemented 2026-11-06,
+uncommitted on the APITxT branch).** A per-IP dimension now
+complements the per-phone/per-org limits: OTP requests are counted
+in a database-backed fixed-window bucket store
+(`rate_limit_buckets`; keys are HMAC hashes of the
+platform-observed client IP — raw addresses are never stored or
+logged — and increments are atomic upserts, so counts are shared
+across replicas). `RATE_LIMIT_IP_MODE` is `off`/`shadow`/`enforce`
+and defaults to **shadow**: exceedances of the candidate ceiling
+(60 requests/IP/hour across all gyms) are counted and logged but
+never block. Enforce mode folds a block into the same synthetic
+response as every other non-issuance. The 60/hour value is a
+candidate, NOT production-calibrated — it must be validated
+against shadow observations on staging (including confirmation
+that Railway's forwarded-header behavior matches the
+single-trusted-proxy assumption in `client-ip.ts`) before
+enforcement is enabled. Issuance is also serialized per
+(organization, phone) by an advisory lock across
+check → send → insert (one transaction; Prisma's 5s default
+timeout is raised to 20s explicitly because the transaction spans
+the provider's 10s send cap), and verification attempts are
+counted by an atomic conditional increment — concurrent requests
+can no longer multiply SMS sends or exceed the attempt budget.
+Observation without an admin UI: accepted-send volume is the
+count of challenge rows (for example per day); note carefully
+that accepted sends are NOT delivered messages and NOT charged
+wallet amounts — delivery and charging depend on the provider,
+whose per-OTP price and refund behavior remain unverified, so
+challenge counts must never be reported as rupee spend. No hard
+global OTP cap exists by design (it would be a platform-wide
+denial-of-service switch). M3b (organization-creation cap,
+readiness cache, staff-lookup throttle) is not implemented.
+
 ## 4.5 Attendance (Slices 1 + 2)
 Manual staff check-in/check-out with one-open-session enforcement,
 expired-membership warning with server-driven confirmation, and
@@ -691,8 +724,11 @@ Supported by current repository evidence unless marked otherwise:
    capped, with exact totals still derived from the central money
    funnel. Remaining: M1b (payment-status grouped aggregate for
    the members list) is not started; M2 request-scoped scope
-   memoization is not started; M3 rate limiting outside the OTP
-   path is not started. Failure logging
+   memoization is not started. M3a OTP rate-limiting hardening
+   (per-IP buckets in shadow mode by default, issuance
+   serialization, atomic verify attempts) is implemented on the
+   APITxT branch — see §4.4; M3b items and any rate limiting
+   beyond the OTP request path are not started. Failure logging
    does not yet cover the member create/update, attendance,
    settings, or onboarding actions.
 8. **Readiness probe — Implemented and merged.** `GET /api/ready`

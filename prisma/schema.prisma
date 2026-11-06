@@ -659,6 +659,29 @@ model MemberOtpChallenge {
 }
 
 // ---------------------------------------------------------------------------
+// Rate-limit buckets (Phase M3a).
+// ---------------------------------------------------------------------------
+// Fixed-window counters for abuse ceilings that span tenants — currently
+// OTP requests per client IP (see src/lib/server/rate-limit.ts). Keys are
+// always keyed HMAC hashes, never raw IP addresses or phone numbers.
+// Increments are atomic upserts, so counts hold under concurrency and
+// across application replicas. The per-phone and per-organization OTP
+// limits are NOT stored here: they keep counting member_otp_challenges
+// rows exactly as before (ADR 019). The composite primary key is the
+// only index — bucket lookups always address one exact key + window.
+model RateLimitBucket {
+  kind        String   @map("kind")
+  keyHash     String   @map("key_hash")
+  windowStart DateTime @map("window_start") @db.Timestamptz(6)
+  count       Int      @default(0)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([kind, keyHash, windowStart])
+  @@map("rate_limit_buckets")
+}
+
+// ---------------------------------------------------------------------------
 // Member sessions (ADR 021).
 // ---------------------------------------------------------------------------
 // A MemberSession is a gym-scoped, application-managed session for the

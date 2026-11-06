@@ -14,6 +14,7 @@ import {
   logProviderUnavailable,
   logUnexpectedError,
 } from "@/lib/server/logger";
+import { clientIpKeyHashForRequest } from "@/lib/server/client-ip";
 import { requestMemberOtp } from "@/lib/server/member-auth";
 import { SmsProviderError } from "@/lib/server/sms-provider";
 
@@ -59,6 +60,13 @@ export async function POST(request: Request) {
       // Only a string can name an intent; anything else is absent,
       // which the facade normalizes to the default link rule.
       intent: typeof intent === "string" ? intent : undefined,
+      // Per-IP rate-limit bucket key (Phase M3a): an HMAC hash of the
+      // platform-observed client address, or null when the request
+      // carries no trustworthy IP. Resolved inside the try so an
+      // enforce-mode configuration failure surfaces as the same 503
+      // family as other OTP infrastructure failures. The raw address
+      // never leaves client-ip.ts.
+      ipKeyHash: clientIpKeyHashForRequest(request),
     });
     return NextResponse.json({ challengeId });
   } catch (error) {

@@ -8,15 +8,22 @@ const {
   mockQueryRaw,
   mockBucketFindUnique,
   mockBucketFindFirst,
+  mockTransaction,
+  mockTxQueryRaw,
+  mockTxExecuteRaw,
 } = vi.hoisted(() => ({
   mockQueryRaw: vi.fn(),
   mockBucketFindUnique: vi.fn(),
   mockBucketFindFirst: vi.fn(),
+  mockTransaction: vi.fn(),
+  mockTxQueryRaw: vi.fn(),
+  mockTxExecuteRaw: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
   db: {
     $queryRaw: mockQueryRaw,
+    $transaction: mockTransaction,
     rateLimitBucket: {
       findUnique: mockBucketFindUnique,
       findFirst: mockBucketFindFirst,
@@ -37,6 +44,14 @@ const KEY_HASH = "a".repeat(64);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Cleanup plumbing defaults: the advisory try-lock is free and a
+  // batch deletes nothing. Individual tests override as needed.
+  mockTxQueryRaw.mockResolvedValue([{ locked: true }]);
+  mockTxExecuteRaw.mockResolvedValue(0);
+  mockTransaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $queryRaw: mockTxQueryRaw, $executeRaw: mockTxExecuteRaw }),
+  );
 });
 
 afterEach(() => {

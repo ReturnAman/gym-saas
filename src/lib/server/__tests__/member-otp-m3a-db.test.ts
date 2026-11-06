@@ -47,6 +47,9 @@ import {
 import {
   OTP_REQUEST_IP_BUCKET_KIND,
   OTP_REQUEST_IP_LIMIT_PER_HOUR,
+  bucketRetentionCutoff,
+  cleanupExpiredRateLimitBuckets,
+  getOldestRateLimitBucketStart,
   getRateLimitBucketCount,
   hourWindowStart,
   incrementRateLimitBucket,
@@ -66,7 +69,7 @@ let secondClient: PrismaClient;
 /** Organizations this suite created; cleanup is scoped to these ids. */
 const createdOrgIds: string[] = [];
 /** Bucket keys this suite uses; bucket cleanup is scoped to them. */
-const SUITE_KEY_HASHES = ["c", "d", "e", "f"].map((ch) => ch.repeat(64));
+const SUITE_KEY_HASHES = ["c", "d", "e", "f", "8", "9"].map((ch) => ch.repeat(64));
 
 async function cleanupSuiteData(): Promise<void> {
   // The DB suites share one database across parallel workers, so
@@ -306,5 +309,152 @@ describe.skipIf(!runDbTests)("member OTP M3a hardening against PostgreSQL", () =
     expect(
       await db.memberOtpChallenge.findUnique({ where: { id: other.challengeId } }),
     ).not.toBeNull();
+  });
+
+  // ------------------------------------------------------------------
+  // Phase M3a.1: bucket retention cleanup against real PostgreSQL.
+  // Fixtures are seeded directly with explicit windows under the
+  // suite's own key hashes; deletion assertions are scoped to them.
+  // ------------------------------------------------------------------
+
+  const RETENTION_KEY = "9".repeat(64);
+  const ACTIVE_KEY = "8".repeat(64);
+
+  async function seedBucket(keyHash: string, windowStart: Date, count = 1) {
+    await db.rateLimitBucket.create({
+      data: { kind: OTP_REQUEST_IP_BUCKET_KIND, keyHash, windowStart, count },
+    });
+  }
+
+  async function bucketAt(keyHash: string, windowStart: Date) {
+    return db.rateLimitBucket.findUnique({
+      where: {
+        kind_keyHash_windowStart: {
+          kind: OTP_REQUEST_IP_BUCKET_KIND,
+          keyHash,
+          windowStart,
+        },
+      },
+    });
+  }
+
+  it("removes only buckets older than the seven-day cutoff; the boundary and current windows survive", async () => {
+    const now = new Date();
+    const cutoff = bucketRetentionCutoff(now);
+    const expiredWindow = new Date(cutoff.getTime() - 3_600_000);
+    const recentWindow = new Date(now.getTime() - 3_600_000);
+    const currentWindow = hourWindowStart(now);
+
+    await seedBucket(RETENTION_KEY, expiredWindow, 4);
+    await seedBucket(RETENTION_KEY, cutoff, 3);
+    await seedBucket(RETENTION_KEY, recentWindow, 2);
+    await seedBucket(RETENTION_KEY, currentWindow, 1);
+    await expect(getOldestRateLimitBucketStart()).resolves.toEqual(expiredWindow);
+
+    const result = await cleanupExpiredRateLimitBuckets({ now });
+    expect(result.lockAcquired).toBe(true);
+    expect(result.deleted).toBe(1);
+
+    await expect(bucketAt(RETENTION_KEY, expiredWindow)).resolves.toBeNull();
+    // Exactly at the cutoff: retained, count untouched.
+    await expect(bucketAt(RETENTION_KEY, cutoff)).resolves.toMatchObject({ count: 3 });
+    await expect(bucketAt(RETENTION_KEY, recentWindow)).resolves.toMatchObject({ count: 2 });
+    await expect(bucketAt(RETENTION_KEY, currentWindow)).resolves.toMatchObject({ count: 1 });
+    await expect(getOldestRateLimitBucketStart()).resolves.toEqual(cutoff);
+
+    // Idempotent: a second run deletes nothing.
+    const again = await cleanupExpiredRateLimitBuckets({ now });
+    expect(again.deleted).toBe(0);
+  });
+
+  it("coordinates concurrent cleaners: combined deletions equal the expired rows, exactly once", async () => {
+    const now = new Date();
+    const base = now.getTime();
+    // 2,500 expired buckets under the suite key (distinct hour
+    // windows 200–2699 hours ago, all beyond the 168-hour cutoff).
+    await db.rateLimitBucket.createMany({
+      data: Array.from({ length: 2_500 }, (_, i) => ({
+        kind: OTP_REQUEST_IP_BUCKET_KIND,
+        keyHash: RETENTION_KEY,
+        windowStart: new Date(base - (200 + i) * 3_600_000),
+        count: 1,
+      })),
+    });
+
+    const [first, second] = await Promise.all([
+      cleanupExpiredRateLimitBuckets({ now }),
+      cleanupExpiredRateLimitBuckets({ now }),
+    ]);
+    expect(first.deleted + second.deleted).toBe(2_500);
+    await expect(
+      db.rateLimitBucket.count({ where: { keyHash: RETENTION_KEY } }),
+    ).resolves.toBe(0);
+  });
+
+  it("runs concurrently with current-window upserts without disturbing them", async () => {
+    const now = new Date();
+    await db.rateLimitBucket.createMany({
+      data: Array.from({ length: 300 }, (_, i) => ({
+        kind: OTP_REQUEST_IP_BUCKET_KIND,
+        keyHash: RETENTION_KEY,
+        windowStart: new Date(now.getTime() - (200 + i) * 3_600_000),
+        count: 1,
+      })),
+    });
+
+    const [cleanup] = await Promise.all([
+      cleanupExpiredRateLimitBuckets({ now }),
+      ...Array.from({ length: 20 }, () =>
+        incrementRateLimitBucket({ kind: OTP_REQUEST_IP_BUCKET_KIND, keyHash: ACTIVE_KEY, now }),
+      ),
+    ]);
+    expect(cleanup.deleted).toBe(300);
+    await expect(
+      getRateLimitBucketCount({ kind: OTP_REQUEST_IP_BUCKET_KIND, keyHash: ACTIVE_KEY, now }),
+    ).resolves.toBe(20);
+  });
+
+  it("leaves enforce and shadow behavior unchanged after cleanup", async () => {
+    const org = await seedGym("RET");
+    const phone = nextPhone();
+    await db.member.create({
+      data: { organizationId: org.id, name: "Retention Member", phoneNumber: phone },
+    });
+    const ipKeyHash = "e".repeat(64);
+    for (let i = 0; i < OTP_REQUEST_IP_LIMIT_PER_HOUR; i += 1) {
+      await incrementRateLimitBucket({ kind: OTP_REQUEST_IP_BUCKET_KIND, keyHash: ipKeyHash });
+    }
+    await seedBucket(RETENTION_KEY, new Date(Date.now() - 200 * 3_600_000), 9);
+    const cleanup = await cleanupExpiredRateLimitBuckets();
+    expect(cleanup.deleted).toBe(1);
+    // The active bucket survived cleanup at full count.
+    await expect(
+      getRateLimitBucketCount({ kind: OTP_REQUEST_IP_BUCKET_KIND, keyHash: ipKeyHash }),
+    ).resolves.toBe(OTP_REQUEST_IP_LIMIT_PER_HOUR);
+
+    vi.stubEnv("RATE_LIMIT_IP_MODE", "enforce");
+    const blocked = await requestMemberOtp({
+      organizationId: org.id,
+      phoneNumber: phone,
+      ipKeyHash,
+    });
+    expect(
+      await db.memberOtpChallenge.findUnique({ where: { id: blocked.challengeId } }),
+    ).toBeNull();
+
+    vi.stubEnv("RATE_LIMIT_IP_MODE", "shadow");
+    const phone2 = nextPhone();
+    await db.member.create({
+      data: { organizationId: org.id, name: "Retention Member Two", phoneNumber: phone2 },
+    });
+    const issued = await requestMemberOtp({
+      organizationId: org.id,
+      phoneNumber: phone2,
+      ipKeyHash,
+    });
+    expect(
+      await db.memberOtpChallenge.findUnique({ where: { id: issued.challengeId } }),
+    ).not.toBeNull();
+    vi.stubEnv("RATE_LIMIT_IP_MODE", "shadow");
   });
 });

@@ -154,6 +154,31 @@ global OTP cap exists by design (it would be a platform-wide
 denial-of-service switch). M3b (organization-creation cap,
 readiness cache, staff-lookup throttle) is not implemented.
 
+**Phase M3a.1 bucket retention (implemented 2026-11-06,
+uncommitted).** `rate_limit_buckets` rows are retained for
+**seven days** — this is the bucket retention period only;
+`member_otp_challenges` have their own lifecycle and are never
+touched by bucket cleanup. The project has no scheduler, so
+cleanup is opportunistic: it rides along with OTP requests, at
+most one attempt per hour per process, coordinated across
+replicas by a PostgreSQL advisory try-lock (at most one cleaner
+at a time; finding the lock held is a normal skip, not an error).
+Each run deletes only windows older than the hour-aligned
+seven-day cutoff, in batches of 1,000 rows, at most 5 batches
+per run — the current window, the only one enforcement reads,
+is never deleted, so cleanup cannot weaken an active limit.
+Cleanup failures are logged and swallowed: OTP issuance is
+unaffected, and cleanup is never a prerequisite for recording a
+bucket. Cleanup lag is observable from the oldest retained
+bucket (`SELECT min(window_start) FROM rate_limit_buckets`, or
+`getOldestRateLimitBucketStart()`). No additional index was
+added: the primary key cannot range-scan `window_start`, but on
+a seeded 120,000-row table (~69,000 expired, roughly 100× the
+pilot's expected working set) one 1,000-row batch took ~79 ms,
+and hourly runs keep the table near its seven-day working set.
+Revisit an index on `(kind, window_start)` if the table
+approaches ~1M rows or a batch scan sustains over ~250 ms.
+
 ## 4.5 Attendance (Slices 1 + 2)
 Manual staff check-in/check-out with one-open-session enforcement,
 expired-membership warning with server-driven confirmation, and

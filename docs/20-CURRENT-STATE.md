@@ -122,7 +122,7 @@ The OTP endpoints return a safe "unavailable" response when
 unconfigured.
 
 **Phase M3a rate-limiting hardening (implemented 2026-11-06,
-uncommitted on the APITxT branch).** A per-IP dimension now
+included in PR #9 on `integration/apitxt-member-otp`).** A per-IP dimension now
 complements the per-phone/per-org limits: OTP requests are counted
 in a database-backed fixed-window bucket store
 (`rate_limit_buckets`; keys are HMAC hashes of the
@@ -148,14 +148,16 @@ Observation without an admin UI: accepted-send volume is the
 count of challenge rows (for example per day); note carefully
 that accepted sends are NOT delivered messages and NOT charged
 wallet amounts — delivery and charging depend on the provider,
-whose per-OTP price and refund behavior remain unverified, so
-challenge counts must never be reported as rupee spend. No hard
+for which APITxT support quoted ₹0.30 per OTP and stated that
+failed deliveries are refunded. Actual account-level wallet debits
+and refunds have not yet been checked through a live delivery test,
+so challenge counts must never be reported as rupee spend. No hard
 global OTP cap exists by design (it would be a platform-wide
 denial-of-service switch). M3b (organization-creation cap,
 readiness cache, staff-lookup throttle) is not implemented.
 
 **Phase M3a.1 bucket retention (implemented 2026-11-06,
-uncommitted).** `rate_limit_buckets` rows are retained for
+included in PR #9 on `integration/apitxt-member-otp`).** `rate_limit_buckets` rows are retained for
 **seven days** — this is the bucket retention period only;
 `member_otp_challenges` have their own lifecycle and are never
 touched by bucket cleanup. The project has no scheduler, so

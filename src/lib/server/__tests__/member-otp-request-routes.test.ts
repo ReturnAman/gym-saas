@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Route contract for POST /api/member-auth/otp/request, with the facade
@@ -26,10 +26,14 @@ const ORG_ID = "c3298d3b-a07f-33eb-de2b-00333455cf3f";
 const PHONE = "9876543210";
 const CHALLENGE_ID = "a12b3c4d-5e6f-47a8-b9c0-0a1b2c3d4e5f";
 
-function jsonRequest(body: unknown) {
+function jsonRequest(body: unknown, extraHeaders: Record<string, string> = {}) {
   return new Request("https://gym.example.com/api/member-auth/otp/request", {
     method: "POST",
-    headers: { "content-type": "application/json", host: "gym.example.com" },
+    headers: {
+      "content-type": "application/json",
+      host: "gym.example.com",
+      ...extraHeaders,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -44,6 +48,10 @@ beforeEach(() => {
   mockRequestMemberOtp.mockResolvedValue({ challengeId: CHALLENGE_ID });
 });
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("POST /api/member-auth/otp/request — intent pass-through", () => {
   it("passes intent 'join' through to the facade", async () => {
     const response = await otpRequestPOST(
@@ -55,7 +63,24 @@ describe("POST /api/member-auth/otp/request — intent pass-through", () => {
       organizationId: ORG_ID,
       phoneNumber: PHONE,
       intent: "join",
+      // No forwarded header and no hash secret configured in this
+      // suite: the request carries no IP bucket key (Phase M3a).
+      ipKeyHash: null,
     });
+  });
+
+  it("passes an HMAC bucket key — never the raw IP — when a trusted forwarded address and secret exist", async () => {
+    vi.stubEnv("RATE_LIMIT_HASH_SECRET", "route-test-rate-secret-0123456789ab");
+    const response = await otpRequestPOST(
+      jsonRequest(
+        { organizationId: ORG_ID, phoneNumber: PHONE },
+        { "x-forwarded-for": "spoofed.example, 203.0.113.7" },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const input = lastFacadeInput();
+    expect(input.ipKeyHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(String(input.ipKeyHash)).not.toContain("203.0.113.7");
   });
 
   it("sends intent as undefined when the body omits it", async () => {

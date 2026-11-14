@@ -61,7 +61,7 @@ k6 is never invoked.
   are the application's real code paths — a seeded session for Gym A
   cannot check in to Gym B (the route rejects it with `GYM_MISMATCH`),
   and an unknown token is treated as signed out.
-- **No Clerk, no OTP, no 2Factor.** Staff/Clerk sessions cannot be
+- **No Clerk, no OTP, no APITxT.** Staff/Clerk sessions cannot be
   seeded and are **not** covered by these scripts; staff surfaces
   remain covered by the Playwright E2E suites. No OTP is ever
   requested, so the SMS provider sees zero load-test traffic.
@@ -90,7 +90,7 @@ LOAD_TEST_CONFIRM_DATABASE=gymsaas_load_local \
 
 # 4. Start the app against the SAME database (dummy Clerk keys are
 #    enough: member paths never call Clerk, and the CI build does the
-#    same; leave TWOFACTOR_API_KEY unset)
+#    same; leave APITXT_API_KEY and MEMBER_OTP_HMAC_SECRET unset)
 DATABASE_URL=postgres://YOUR_DB_USER@localhost:5432/gymsaas_load_local \
 APP_URL=http://localhost:3000 \
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_ZHVtbXkubG9jYWwk \

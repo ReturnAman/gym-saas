@@ -336,7 +336,7 @@ function seedChallenge(overrides: Record<string, unknown> = {}) {
     id: "challenge-1",
     organizationId: ORG_A,
     phoneNumber: PHONE,
-    providerSessionId: "provider-session-xyz",
+    otpHash: "0".repeat(64),
     status: "VERIFIED",
     attempts: 0,
     expiresAt: new Date(Date.now() + 5 * 60_000),

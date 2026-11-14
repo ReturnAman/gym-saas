@@ -37,6 +37,7 @@ const SUITES = [
   "src/lib/server/__tests__/payment-claims-tenant-integrity.test.ts",
   "src/lib/server/__tests__/member-join-requests-db.test.ts",
   "src/lib/server/__tests__/member-otp-join-intent-db.test.ts",
+  "src/lib/server/__tests__/member-otp-m3a-db.test.ts",
   "src/lib/server/__tests__/payments-idempotency.test.ts",
   "src/lib/server/__tests__/payments-reversal-db.test.ts",
   "src/lib/server/__tests__/saas-trial-db.test.ts",

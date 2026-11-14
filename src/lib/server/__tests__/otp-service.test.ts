@@ -1,21 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockChallengeFindFirst,
   mockChallengeCount,
   mockChallengeCreate,
-  mockChallengeUpdate,
   mockChallengeUpdateMany,
+  mockTxExecuteRaw,
+  mockTransaction,
   mockSendOtp,
-  mockVerifyOtp,
 } = vi.hoisted(() => ({
   mockChallengeFindFirst: vi.fn(),
   mockChallengeCount: vi.fn(),
   mockChallengeCreate: vi.fn(),
-  mockChallengeUpdate: vi.fn(),
   mockChallengeUpdateMany: vi.fn(),
+  mockTxExecuteRaw: vi.fn(),
+  mockTransaction: vi.fn(),
   mockSendOtp: vi.fn(),
-  mockVerifyOtp: vi.fn(),
 }));
 
 vi.mock("@/lib/server/db", () => ({
@@ -24,17 +24,17 @@ vi.mock("@/lib/server/db", () => ({
       findFirst: mockChallengeFindFirst,
       count: mockChallengeCount,
       create: mockChallengeCreate,
-      update: mockChallengeUpdate,
       updateMany: mockChallengeUpdateMany,
     },
+    $transaction: mockTransaction,
   },
 }));
 
-vi.mock("@/lib/server/twofactor-provider", () => ({
-  twoFactorProvider: { sendOtp: mockSendOtp, verifyOtp: mockVerifyOtp },
+vi.mock("@/lib/server/apitxt-provider", () => ({
+  apiTxtProvider: { sendOtp: mockSendOtp },
 }));
 
-import { SmsProviderError } from "@/lib/server/sms-provider";
+import { computeOtpHash } from "@/lib/server/otp-crypto";
 import {
   OTP_MAX_VERIFY_ATTEMPTS,
   OtpRateLimitError,
@@ -42,18 +42,29 @@ import {
   issueChallenge,
   verifyChallenge,
 } from "@/lib/server/otp-service";
+import { SmsProviderError } from "@/lib/server/sms-provider";
 
 const ORG_ID = "c3298d3b-a07f-33eb-de2b-00333455cf3f";
 const PHONE = "9876543210";
 const CHALLENGE_ID = "a12b3c4d-5e6f-47a8-b9c0-0a1b2c3d4e5f";
-const SESSION_ID = "provider-session-xyz";
+const SECRET = "test-otp-hmac-secret-0123456789abcdef";
+const CORRECT_OTP = "123456";
+
+function hashFor(otp: string, challengeId = CHALLENGE_ID, orgId = ORG_ID) {
+  return computeOtpHash(SECRET, {
+    organizationId: orgId,
+    challengeId,
+    phoneNumber: PHONE,
+    otp,
+  });
+}
 
 function pendingChallenge(overrides: Record<string, unknown> = {}) {
   return {
     id: CHALLENGE_ID,
     organizationId: ORG_ID,
     phoneNumber: PHONE,
-    providerSessionId: SESSION_ID,
+    otpHash: hashFor(CORRECT_OTP),
     status: "PENDING",
     attempts: 0,
     expiresAt: new Date(Date.now() + 5 * 60_000),
@@ -70,36 +81,93 @@ function mockNoRateLimits() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockChallengeUpdate.mockResolvedValue({});
-  mockChallengeUpdateMany.mockResolvedValue({ count: 0 });
+  vi.stubEnv("MEMBER_OTP_HMAC_SECRET", SECRET);
+  mockChallengeUpdateMany.mockResolvedValue({ count: 1 });
+  mockTxExecuteRaw.mockResolvedValue(1);
+  // The transaction mock runs the callback against the same mocked
+  // challenge surface the assertions inspect.
+  mockTransaction.mockImplementation(
+    async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        memberOtpChallenge: {
+          findFirst: mockChallengeFindFirst,
+          count: mockChallengeCount,
+          create: mockChallengeCreate,
+          updateMany: mockChallengeUpdateMany,
+        },
+        $executeRaw: mockTxExecuteRaw,
+      }),
+  );
+  // The create mock echoes the service-generated id, as the real
+  // database does when the row is inserted with an explicit id.
+  mockChallengeCreate.mockImplementation(
+    async (args: { data: { id: string } }) => ({ id: args.data.id }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 describe("issueChallenge", () => {
-  it("sends via the provider, supersedes the old pending challenge, and persists the new one", async () => {
+  it("serializes on the advisory lock inside a transaction with an explicit timeout", async () => {
     mockNoRateLimits();
-    mockSendOtp.mockResolvedValue({ providerSessionId: SESSION_ID });
-    mockChallengeCreate.mockResolvedValue({ id: CHALLENGE_ID });
+    mockSendOtp.mockResolvedValue(undefined);
+
+    await issueChallenge({ organizationId: ORG_ID, phoneNumber: PHONE });
+
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTransaction.mock.calls[0]?.[1]).toEqual({
+      maxWait: 5_000,
+      timeout: 20_000,
+    });
+    expect(mockTxExecuteRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (mockTxExecuteRaw.mock.calls[0]?.[0] as TemplateStringsArray).join("?");
+    expect(lockSql).toContain("pg_advisory_xact_lock");
+  });
+
+  it("delivers an app-generated OTP, supersedes the old pending challenge, and persists only its digest", async () => {
+    mockNoRateLimits();
+    mockSendOtp.mockResolvedValue(undefined);
 
     const result = await issueChallenge({ organizationId: ORG_ID, phoneNumber: PHONE });
-    expect(result).toEqual({ challengeId: CHALLENGE_ID });
 
-    expect(mockSendOtp).toHaveBeenCalledWith(PHONE);
+    // The provider received the phone and an application-generated
+    // six-digit code — delivery only, no session comes back.
+    expect(mockSendOtp).toHaveBeenCalledTimes(1);
+    const [sentPhone, sentOtp] = mockSendOtp.mock.calls[0] as [string, string];
+    expect(sentPhone).toBe(PHONE);
+    expect(sentOtp).toMatch(/^[0-9]{6}$/);
+
     expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
       where: { organizationId: ORG_ID, phoneNumber: PHONE, status: "PENDING" },
       data: { status: "SUPERSEDED" },
     });
+
     const createData = mockChallengeCreate.mock.calls[0]?.[0].data;
+    expect(result).toEqual({ challengeId: createData.id });
+    // The digest is the HMAC of the DELIVERED code, bound to this
+    // challenge — recomputed independently here.
+    expect(createData.otpHash).toBe(
+      computeOtpHash(SECRET, {
+        organizationId: ORG_ID,
+        challengeId: createData.id,
+        phoneNumber: PHONE,
+        otp: sentOtp,
+      }),
+    );
     expect(createData).toMatchObject({
       organizationId: ORG_ID,
       phoneNumber: PHONE,
-      providerSessionId: SESSION_ID,
       status: "PENDING",
       attempts: 0,
     });
     expect(createData.expiresAt.getTime()).toBeGreaterThan(Date.now());
-    // The challenge row must never carry an OTP.
+    // The challenge row must never carry the plaintext OTP.
     expect(createData).not.toHaveProperty("otp");
     expect(createData).not.toHaveProperty("code");
+    expect(createData.otpHash).not.toBe(sentOtp);
+    expect(createData.otpHash).not.toContain(sentOtp);
   });
 
   it("enforces the resend cooldown from the latest challenge", async () => {
@@ -136,7 +204,7 @@ describe("issueChallenge", () => {
     expect(mockSendOtp).not.toHaveBeenCalled();
   });
 
-  it("leaves no pending challenge behind when the provider call fails", async () => {
+  it("leaves no pending challenge behind and does not supersede when the provider call fails", async () => {
     mockNoRateLimits();
     mockSendOtp.mockRejectedValue(new SmsProviderError("PROVIDER_UNAVAILABLE"));
     await expect(
@@ -145,24 +213,47 @@ describe("issueChallenge", () => {
     expect(mockChallengeCreate).not.toHaveBeenCalled();
     expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
   });
+
+  it("sends nothing when the HMAC secret is missing or too short", async () => {
+    mockNoRateLimits();
+    vi.stubEnv("MEMBER_OTP_HMAC_SECRET", "");
+    const missing = await issueChallenge({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+    }).catch((e: unknown) => e);
+    expect(missing).toBeInstanceOf(SmsProviderError);
+    expect((missing as SmsProviderError).code).toBe("NOT_CONFIGURED");
+
+    vi.stubEnv("MEMBER_OTP_HMAC_SECRET", "too-short");
+    const short = await issueChallenge({
+      organizationId: ORG_ID,
+      phoneNumber: PHONE,
+    }).catch((e: unknown) => e);
+    expect(short).toBeInstanceOf(SmsProviderError);
+    expect((short as SmsProviderError).code).toBe("NOT_CONFIGURED");
+
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeCreate).not.toHaveBeenCalled();
+    expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
+  });
 });
 
 describe("verifyChallenge", () => {
-  it("marks the challenge VERIFIED on a correct OTP", async () => {
+  it("marks the challenge VERIFIED on the correct OTP, without any provider call", async () => {
     mockChallengeFindFirst.mockResolvedValue(pendingChallenge());
-    mockVerifyOtp.mockResolvedValue({ verified: true });
 
     const result = await verifyChallenge({
       organizationId: ORG_ID,
       challengeId: CHALLENGE_ID,
-      otp: "123456",
+      otp: CORRECT_OTP,
     });
     expect(result).toEqual({ verified: true, phoneNumber: PHONE });
-    expect(mockVerifyOtp).toHaveBeenCalledWith(SESSION_ID, "123456");
-    const updateData = mockChallengeUpdate.mock.calls[0]?.[0];
-    expect(updateData.where).toEqual({ id: CHALLENGE_ID });
-    expect(updateData.data.status).toBe("VERIFIED");
-    expect(updateData.data.verifiedAt).toBeInstanceOf(Date);
+    // Verification is purely local in the new model.
+    expect(mockSendOtp).not.toHaveBeenCalled();
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
+      data: { status: "VERIFIED", verifiedAt: expect.any(Date) },
+    });
   });
 
   it("looks the challenge up tenant-scoped (id + organization)", async () => {
@@ -171,69 +262,130 @@ describe("verifyChallenge", () => {
       verifyChallenge({
         organizationId: "another-org",
         challengeId: CHALLENGE_ID,
-        otp: "123456",
+        otp: CORRECT_OTP,
       }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
     expect(mockChallengeFindFirst).toHaveBeenCalledWith({
       where: { id: CHALLENGE_ID, organizationId: "another-org" },
     });
-    expect(mockVerifyOtp).not.toHaveBeenCalled();
   });
 
-  it("increments attempts on a wrong OTP", async () => {
-    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ attempts: 1 }));
-    mockVerifyOtp.mockResolvedValue({ verified: false });
-    await expect(
-      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
-    ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
-      data: { attempts: 2 },
-    });
-  });
-
-  it("locks the challenge when the failed attempt reaches the maximum", async () => {
+  it("fails generically when the digest was bound to another organization", async () => {
     mockChallengeFindFirst.mockResolvedValue(
-      pendingChallenge({ attempts: OTP_MAX_VERIFY_ATTEMPTS - 1 }),
+      pendingChallenge({ otpHash: hashFor(CORRECT_OTP, CHALLENGE_ID, "another-org") }),
     );
-    mockVerifyOtp.mockResolvedValue({ verified: false });
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+  });
+
+  it("records a wrong OTP with one atomic conditional increment", async () => {
+    mockChallengeFindFirst
+      .mockResolvedValueOnce(pendingChallenge({ attempts: 1 }))
+      .mockResolvedValue({ attempts: 2, status: "PENDING" });
     await expect(
       verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
-      data: { attempts: OTP_MAX_VERIFY_ATTEMPTS, status: "LOCKED" },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: CHALLENGE_ID,
+        status: "PENDING",
+        attempts: { lt: OTP_MAX_VERIFY_ATTEMPTS },
+      },
+      data: { attempts: { increment: 1 } },
     });
   });
 
-  it("rejects an expired challenge without calling the provider", async () => {
+  it("locks the challenge when the atomic increment lands on the maximum", async () => {
+    mockChallengeFindFirst
+      .mockResolvedValueOnce(pendingChallenge({ attempts: OTP_MAX_VERIFY_ATTEMPTS - 1 }))
+      .mockResolvedValue({ attempts: OTP_MAX_VERIFY_ATTEMPTS, status: "PENDING" });
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: CHALLENGE_ID,
+        status: "PENDING",
+        attempts: { gte: OTP_MAX_VERIFY_ATTEMPTS },
+      },
+      data: { status: "LOCKED" },
+    });
+  });
+
+  it("records nothing when concurrent attempts already exhausted the budget", async () => {
+    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ attempts: 2 }));
+    mockChallengeUpdateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "000000" }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+    // Only the failed increment was attempted — no lock write, no
+    // second increment.
+    expect(mockChallengeUpdateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("locks a PENDING challenge whose attempts are already at the maximum", async () => {
+    mockChallengeFindFirst.mockResolvedValue(
+      pendingChallenge({ attempts: OTP_MAX_VERIFY_ATTEMPTS }),
+    );
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
+      data: { status: "LOCKED" },
+    });
+  });
+
+  it("rejects an expired challenge and marks it EXPIRED", async () => {
     mockChallengeFindFirst.mockResolvedValue(
       pendingChallenge({ expiresAt: new Date(Date.now() - 1_000) }),
     );
     await expect(
-      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "123456" }),
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
     ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockVerifyOtp).not.toHaveBeenCalled();
-    expect(mockChallengeUpdate).toHaveBeenCalledWith({
-      where: { id: CHALLENGE_ID },
+    expect(mockChallengeUpdateMany).toHaveBeenCalledWith({
+      where: { id: CHALLENGE_ID, status: "PENDING" },
       data: { status: "EXPIRED" },
     });
   });
 
-  it("rejects a second verification (single-use)", async () => {
-    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ status: "VERIFIED" }));
-    await expect(
-      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "123456" }),
-    ).rejects.toBeInstanceOf(OtpVerificationError);
-    expect(mockVerifyOtp).not.toHaveBeenCalled();
+  it("rejects non-PENDING challenges (single-use, superseded, locked)", async () => {
+    for (const status of ["VERIFIED", "SUPERSEDED", "LOCKED", "EXPIRED"]) {
+      mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ status }));
+      await expect(
+        verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
+      ).rejects.toBeInstanceOf(OtpVerificationError);
+    }
+    expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("does not consume an attempt when the provider is unavailable", async () => {
-    mockChallengeFindFirst.mockResolvedValue(pendingChallenge());
-    mockVerifyOtp.mockRejectedValue(new SmsProviderError("PROVIDER_UNAVAILABLE"));
+  it("fails generically for a challenge with a missing digest (legacy row)", async () => {
+    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ otpHash: null }));
     await expect(
-      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: "123456" }),
-    ).rejects.toBeInstanceOf(SmsProviderError);
-    expect(mockChallengeUpdate).not.toHaveBeenCalled();
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+  });
+
+  it("fails generically for a challenge with a malformed digest", async () => {
+    mockChallengeFindFirst.mockResolvedValue(pendingChallenge({ otpHash: "zz-not-hex" }));
+    await expect(
+      verifyChallenge({ organizationId: ORG_ID, challengeId: CHALLENGE_ID, otp: CORRECT_OTP }),
+    ).rejects.toBeInstanceOf(OtpVerificationError);
+  });
+
+  it("fails closed with the configuration error when the HMAC secret is unavailable", async () => {
+    mockChallengeFindFirst.mockResolvedValue(pendingChallenge());
+    vi.stubEnv("MEMBER_OTP_HMAC_SECRET", "");
+    const error = await verifyChallenge({
+      organizationId: ORG_ID,
+      challengeId: CHALLENGE_ID,
+      otp: CORRECT_OTP,
+    }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(SmsProviderError);
+    expect((error as SmsProviderError).code).toBe("NOT_CONFIGURED");
+    // No attempt consumed and no state change on a configuration failure.
+    expect(mockChallengeUpdateMany).not.toHaveBeenCalled();
   });
 });

@@ -1,19 +1,19 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The 2Factor provider is the only stub in this suite: sends resolve
- * with synthetic session ids and every code verifies. Everything else
- * — the facade, the OTP service, the database — is real, so the
- * eligibility, rate-limit, and consumption guarantees are proven
- * against actual challenge rows.
+ * The APITxT delivery provider is the only stub in this suite: sends
+ * capture the application-generated code instead of dispatching an
+ * SMS, and verification runs the real local digest comparison against
+ * it. Everything else — the facade, the OTP service, the database —
+ * is real, so the eligibility, rate-limit, and consumption guarantees
+ * are proven against actual challenge rows.
  */
-const { mockSendOtp, mockVerifyOtp } = vi.hoisted(() => ({
+const { mockSendOtp } = vi.hoisted(() => ({
   mockSendOtp: vi.fn(),
-  mockVerifyOtp: vi.fn(),
 }));
 
-vi.mock("@/lib/server/twofactor-provider", () => ({
-  twoFactorProvider: { sendOtp: mockSendOtp, verifyOtp: mockVerifyOtp },
+vi.mock("@/lib/server/apitxt-provider", () => ({
+  apiTxtProvider: { sendOtp: mockSendOtp },
 }));
 
 import { db } from "@/lib/server/db";
@@ -49,8 +49,15 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
     const suffix = crypto.randomUUID().slice(0, 8);
     const createdOrgIds: string[] = [];
     const usedPhones: string[] = [];
+    const sentOtps: string[] = [];
     let phoneCounter = 0;
-    let sendCounter = 0;
+
+    const TEST_OTP_SECRET = "test-otp-hmac-secret-0123456789abcdef";
+
+    /** The code the application generated for the most recent send. */
+    function lastSentOtp(): string {
+      return sentOtps[sentOtps.length - 1]!;
+    }
 
     function nextPhone(): string {
       phoneCounter += 1;
@@ -98,7 +105,6 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         data: Array.from({ length: 100 }, (_, i) => ({
           organizationId: orgId,
           phoneNumber: `97${String(i).padStart(8, "0")}`,
-          providerSessionId: `seed-${suffix}-${i}`,
           status: "EXPIRED" as const,
           expiresAt: new Date(Date.now() + 5 * 60_000),
         })),
@@ -122,11 +128,10 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
 
     beforeEach(() => {
       vi.clearAllMocks();
-      mockSendOtp.mockImplementation(async () => {
-        sendCounter += 1;
-        return { providerSessionId: `stub-${suffix}-${sendCounter}` };
+      vi.stubEnv("MEMBER_OTP_HMAC_SECRET", TEST_OTP_SECRET);
+      mockSendOtp.mockImplementation(async (_phone: string, otp: string) => {
+        sentOtps.push(otp);
       });
-      mockVerifyOtp.mockResolvedValue({ verified: true });
     });
 
     afterAll(async () => {
@@ -167,12 +172,12 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         status: "PENDING",
       });
-      expect(mockSendOtp).toHaveBeenCalledWith(phone);
+      expect(mockSendOtp).toHaveBeenCalledWith(phone, expect.stringMatching(/^[0-9]{6}$/));
 
       const verified = await verifyMemberOtp({
         organizationId: org.id,
         challengeId,
-        otp: "123456",
+        otp: lastSentOtp(),
       });
       expect(verified).toEqual({ verified: true });
       expect((await challengeRow(challengeId))?.status).toBe("VERIFIED");
@@ -302,7 +307,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       // The challenge is phone-proof; linking applies its own
       // candidate rules and this member was always linkable.
@@ -328,7 +333,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       // Zero candidates: linking fails with its one generic error and
       // the failed transaction leaves the challenge unconsumed.
@@ -347,7 +352,7 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         organizationId: org.id,
         phoneNumber: phone,
       });
-      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: "123456" });
+      await verifyMemberOtp({ organizationId: org.id, challengeId, otp: lastSentOtp() });
 
       const result = await submitMemberJoinRequest(
         joinInput(org.id, challengeId),
@@ -360,19 +365,22 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
       ).toBe(0);
     });
 
-    it("leaves exactly one live challenge under concurrent join requests for one phone", async () => {
+    it("serializes concurrent join requests for one phone: exactly one SMS is sent", async () => {
       const org = await seedGym("RACE");
       const phone = nextPhone();
 
-      // Both provider sends stay in flight until the test releases
-      // them, so the two requests genuinely overlap; releasing them
-      // in order models the two SMS sends completing in sequence.
-      const releases: Array<
-        (value: { providerSessionId: string }) => void
-      > = [];
+      // The provider send stays in flight until the test releases it,
+      // so the race window is genuinely open: pre-M3a, the second
+      // request would also pass the cooldown check and dispatch its
+      // own SMS (this test then observed two sends). With issuance
+      // serialized by the (organization, phone) advisory lock, the
+      // second request waits for the first to commit and then meets
+      // the fresh challenge inside the resend cooldown — it folds to
+      // the synthetic response and never sends.
+      const releases: Array<() => void> = [];
       mockSendOtp.mockImplementation(
         () =>
-          new Promise<{ providerSessionId: string }>((resolve) => {
+          new Promise<void>((resolve) => {
             releases.push(resolve);
           }),
       );
@@ -387,30 +395,25 @@ describe.skipIf(process.env.RUN_DB_TESTS !== "true")(
         phoneNumber: phone,
         intent: "join",
       });
-      await vi.waitFor(() => expect(releases).toHaveLength(2));
 
-      releases[0]!({ providerSessionId: `race-${suffix}-1` });
-      // The first request has fully landed before the second send
-      // completes, so the second send's supersede must retire it.
-      await vi.waitFor(async () => {
-        const rows = await db.memberOtpChallenge.findMany({
-          where: { organizationId: org.id, phoneNumber: phone },
-        });
-        expect(rows).toHaveLength(1);
-      });
-      releases[1]!({ providerSessionId: `race-${suffix}-2` });
+      await vi.waitFor(() => expect(releases).toHaveLength(1));
+      // Give the second request ample opportunity to (incorrectly)
+      // reach the provider; under serialization it cannot.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(releases).toHaveLength(1);
+      expect(mockSendOtp).toHaveBeenCalledTimes(1);
 
+      releases[0]!();
       const [firstResult, secondResult] = await Promise.all([first, second]);
-      expect(firstResult.challengeId).not.toBe(secondResult.challengeId);
+      expect(secondResult.challengeId).not.toBe(firstResult.challengeId);
 
       const rows = await db.memberOtpChallenge.findMany({
         where: { organizationId: org.id, phoneNumber: phone },
       });
-      expect(rows).toHaveLength(2);
-      const byId = new Map(rows.map((row) => [row.id, row]));
-      expect(byId.get(firstResult.challengeId)?.status).toBe("SUPERSEDED");
-      expect(byId.get(secondResult.challengeId)?.status).toBe("PENDING");
-      expect(rows.filter((row) => row.status === "PENDING")).toHaveLength(1);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ id: firstResult.challengeId, status: "PENDING" });
+      // The second result is synthetic: it names no stored challenge.
+      expect(rows.some((row) => row.id === secondResult.challengeId)).toBe(false);
     });
 
     it("binds a join challenge to its gym and keeps caps per-gym", async () => {

@@ -20,7 +20,7 @@
  * - All data is synthetic. Member phones are generated in a reserved
  *   pattern (91 + gym + member sequence) and belong to no real person.
  *
- * Session strategy (no Clerk, no 2Factor, no OTP anywhere):
+ * Session strategy (no Clerk, no APITxT, no OTP anywhere):
  * member sessions are inserted directly as rows in member_sessions,
  * exactly as the member linking flow creates them — the raw token is
  * generated here, only its SHA-256 hash is stored, and the raw tokens
